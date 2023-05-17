@@ -2,6 +2,7 @@ require('dotenv').config();
 const { createScraper, CompanyTypes } = require('israeli-bank-scrapers');
 const MongoClient = require('mongodb').MongoClient;
 const TelegramBot = require('node-telegram-bot-api');
+const cron = require('node-cron');
 
 // Function to check if transaction already exists in db
 async function transactionExists(record) {
@@ -90,7 +91,6 @@ async function handleTransactions(user, companyId, credentials, chatId) {
   }
 }
 
-// Function to find key in object case insensitive
 function findKeyCaseInsensitive(object, targetKey) {
   const lowerCaseTargetKey = targetKey.toLowerCase();
   for (const key in object) {
@@ -98,11 +98,10 @@ function findKeyCaseInsensitive(object, targetKey) {
       return key;
     }
   }
-  return null;  // Return null if no match is found
+  return null;
 }
 
 
-// Get users from .env
 const users = process.env.USERS.split(',');
 
 // For each user, scrape their transactions
@@ -114,7 +113,6 @@ users.forEach((user) => {
   // Get unique company names from user's environment variables
   const companies = [...new Set(userEnvVars.map(key => key.split('_')[1]))];
 
-  // For each company, scrape transactions
   companies.forEach((company) => {
     const credentials = {
       id: process.env[`${user}_${company}_ID`],
@@ -126,7 +124,6 @@ users.forEach((user) => {
       nationalID: process.env[`${user}_${company}_NATIONAL_ID`],
     };
 
-    // Telegram chat id
     const chatId = process.env[`${user}_${company}_TELEGRAM_CHANNEL_ID`] || process.env[`${user}_TELEGRAM_CHANNEL_ID`];
 
     // Get CompanyTypes key from config company name
@@ -136,7 +133,10 @@ users.forEach((user) => {
       return;
     }
 
-    // Start scraping
-    handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
+    cron.schedule(process.env.TRANSACTION_SYNC_SCHEDULE, () => {
+      handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
+    }, {
+      timezone: 'Asia/Jerusalem'
+    });
   });
 });
