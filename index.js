@@ -3,9 +3,36 @@ const { createScraper, CompanyTypes } = require('israeli-bank-scrapers');
 const MongoClient = require('mongodb').MongoClient;
 const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
+const moment = require('moment-timezone');
+
+// Function to format transaction for Telegram
+function format(transaction) {
+  let date = moment(transaction.date).tz("Asia/Jerusalem");
+  let processedDate = moment(transaction.processedDate).tz("Asia/Jerusalem");
+
+  // If time equals 00:00:00, format without time
+  date = date.format('HH:mm:ss') === '00:00:00' ? date.format('YYYY-MM-DD') : date.format('YYYY-MM-DD HH:mm:ss');
+  processedDate = processedDate.format('HH:mm:ss') === '00:00:00' ? processedDate.format('YYYY-MM-DD') : processedDate.format('YYYY-MM-DD HH:mm:ss');
+
+  const chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
+  const incomeOrExpenseEmoji = transaction.chargedAmount > 0 ? '💰' : '💸'; // 💰 for income, 💸 for expense
+  let description = transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
+  description = transaction.identifier ? `${transaction.identifier} - ${description}` : description;
+
+  return `
+Acccount: *${transaction.accountNumber} ${incomeOrExpenseEmoji}*
+Amount: *${chargedAmount}*
+Description: *${description}*
+Date: *${date}*
+
+Processed Date: ${processedDate}
+Type: ${transaction.type}
+Status: ${transaction.status}
+`;
+}
 
 // Function to check if transaction already exists in db
-async function transactionExists(record) {
+async function transactionExists(transaction) {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
   try {
     await client.connect();
@@ -13,9 +40,9 @@ async function transactionExists(record) {
     const transactions = database.collection("transactions");
     // Check if transaction already exists in database
     const existingTransaction = await transactions.findOne({
-      date: record.date,
-      chargedAmount: record.chargedAmount,
-      description: record.description
+      date: transaction.date,
+      chargedAmount: transaction.chargedAmount,
+      description: transaction.description
     });
     return !!existingTransaction;
   } finally {
@@ -23,21 +50,21 @@ async function transactionExists(record) {
   }
 }
 
-async function saveTransaction(record) {
+async function save(transaction) {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
   try {
     await client.connect();
     const database = client.db("transactionsDB");
     const transactions = database.collection("transactions");
-    await transactions.insertOne(record);
+    await transactions.insertOne(transaction);
   } finally {
     await client.close();
   }
 }
 
-function notify(record, chatId) {
+function notify(transaction, chatId) {
   const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
-  bot.sendMessage(chatId, JSON.stringify(record));
+  bot.sendMessage(chatId, format(transaction), { parse_mode: 'Markdown' });
 }
 
 // Function to scrape bank transactions, store to MongoDB and send to Telegram chat
@@ -52,38 +79,40 @@ async function handleTransactions(user, companyId, credentials, chatId) {
   const scrapeResult = await scraper.scrape(credentials);
 
   if (scrapeResult.success) {
-    let records = [];
+    let transactions = [];
     scrapeResult.accounts.forEach((account) => {
       account.txns.forEach((txn) => {
-        records.push({
+        transactions.push({
           accountNumber: account.accountNumber,
           date: new Date(txn.date),
           description: txn.description,
-          memo: txn.memo,
+          memo: txn.memo, // can be null
           originalAmount: txn.originalAmount,
           originalCurrency: txn.originalCurrency, // possible wrong value: ILS instead of USD
-          chargedAmount: txn.chargedAmount, // possible the same as originalAmount, even if in USD/EUR, in case of USD/EUR account
+          chargedAmount: txn.chargedAmount, // possible the same as originalAmount, even if originalCurrency is USD/EUR
           type: txn.type,
           status: txn.status,
-          identifier: txn.identifier, // only if exists
+          identifier: txn.identifier, // can be null
           processedDate: new Date(txn.processedDate),
-          installments: txn.installments // only if exists
+          installments: txn.installments, // can be null
+          companyId: companyId,
+          userCode: user,
         });
       });
     });
 
-    // just last record
-    // TODO: rework to get actual last record that was not scraped before
-    records = records.slice(-1);
+    // just last txns
+    // TODO: rework to get actual last txns that was not scraped before
+    transactions = transactions.slice(-5);
 
-    for (const record of records) {
-      if (await transactionExists(record)) {
-        console.log(`Skipping existing transaction: ${JSON.stringify(record)}`);
+    for (const transaction of transactions) {
+      if (await transactionExists(transaction)) {
+        console.log(`Skipping existing transaction: ${JSON.stringify(transaction)}`);
         continue;
       }
 
-      await saveTransaction(record);
-      await notify(record, chatId);
+      await save(transaction);
+      await notify(transaction, chatId);
     }
 
   } else {
