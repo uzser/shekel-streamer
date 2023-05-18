@@ -1,9 +1,13 @@
-require('dotenv').config();
-const { createScraper, CompanyTypes } = require('israeli-bank-scrapers');
-const MongoClient = require('mongodb').MongoClient;
-const TelegramBot = require('node-telegram-bot-api');
-const cron = require('node-cron');
-const moment = require('moment-timezone');
+import dotenv from 'dotenv';
+dotenv.config();
+
+import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
+import { MongoClient } from 'mongodb';
+import TelegramBot from 'node-telegram-bot-api';
+import cron from 'node-cron';
+import moment from 'moment-timezone';
+import { ChatGPTAPI } from 'chatgpt';
+import retry from 'async-retry';
 
 // Function to format transaction for Telegram
 function format(transaction) {
@@ -17,18 +21,41 @@ function format(transaction) {
   const chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
   const incomeOrExpenseEmoji = transaction.chargedAmount > 0 ? '💰' : '💸'; // 💰 for income, 💸 for expense
   let description = transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
-  description = transaction.identifier ? `${transaction.identifier} - ${description}` : description;
 
   return `
 Acccount: *${transaction.accountNumber} ${incomeOrExpenseEmoji}*
 Amount: *${chargedAmount}*
-Description: *${description}*
-Date: *${date}*
+Description: *${description}*${transaction.translatedDescription ? `\nDescription (EN): *${transaction.translatedDescription}*` : ''}
+Date: *${date}*${transaction.identifier ? `\nId: *${transaction.identifier}*` : ''}
 
 Processed Date: ${processedDate}
 Type: ${transaction.type}
 Status: ${transaction.status}
 `;
+}
+
+// Function to translate transaction's description
+async function translateDescription(description) {
+  const api = new ChatGPTAPI({
+    apiKey: process.env.OPENAI_API_KEY,
+    completionParams: {
+      model: process.env.GPT_MODEL_FAST,
+      temperature: 0.2 // for stable results
+    }
+  });
+
+  const request = process.env.GPT_TRANSLATION_REQUEST.replace(/\\n/g, '\n').replace('<text_to_replace>', description);
+  const response = await api.sendMessage(request)
+  console.log(`Translation response:\n${response.text}`);
+
+  // Split the text into lines and obtain translations from the response in the format:
+  // "translate1
+  // translate2"
+  // Note: The first line of the response corresponds to the translation of the first phrase from the request.
+  // This is why we start the index from [1].
+  // This is done to form a list of phrases that can be more clearly understood by the GPT.
+  let traslations = response.text.split('\n');
+  return traslations[1];
 }
 
 // Function to check if transaction already exists in db
@@ -73,7 +100,8 @@ async function handleTransactions(user, companyId, credentials, chatId) {
     companyId: companyId,
     startDate: new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1),
     //startDate: new Date(new Date().getFullYear() - 1, new Date().getMonth(), new Date().getDate()),
-    combineInstallments: false
+    combineInstallments: false,
+    timeout: 0 // no timeout
   });
 
   const scrapeResult = await scraper.scrape(credentials);
@@ -86,6 +114,7 @@ async function handleTransactions(user, companyId, credentials, chatId) {
           accountNumber: account.accountNumber,
           date: new Date(txn.date),
           description: txn.description,
+          translatedDescription: null, // will be filled later
           memo: txn.memo, // can be null
           originalAmount: txn.originalAmount,
           originalCurrency: txn.originalCurrency, // possible wrong value: ILS instead of USD
@@ -97,6 +126,7 @@ async function handleTransactions(user, companyId, credentials, chatId) {
           installments: txn.installments, // can be null
           companyId: companyId,
           userCode: user,
+          chatId: chatId
         });
       });
     });
@@ -109,6 +139,22 @@ async function handleTransactions(user, companyId, credentials, chatId) {
       if (await transactionExists(transaction)) {
         console.log(`Skipping existing transaction: ${JSON.stringify(transaction)}`);
         continue;
+      }
+
+      // Try to translate description
+      if (process.env.OPENAI_API_KEY && process.env.GPT_TRANSLATION_REQUEST && process.env.GPT_MODEL_FAST) {
+        let description = transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
+
+        const translatedDescription = await retry(async () => {
+          return await translateDescription(description);
+        }, {
+          retries: 5,
+          factor: 2,
+          minTimeout: 20000,
+          randomize: true
+        });
+
+        transaction.translatedDescription = translatedDescription;
       }
 
       await save(transaction);
@@ -129,7 +175,6 @@ function findKeyCaseInsensitive(object, targetKey) {
   }
   return null;
 }
-
 
 const users = process.env.USERS.split(',');
 
