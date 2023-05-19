@@ -9,14 +9,21 @@ import moment from 'moment-timezone';
 import { ChatGPTAPI } from 'chatgpt';
 import retry from 'async-retry';
 
+
+const DB_NAME = 'shekelStreamerDB';
+const TRANSACTIONS_COLLECTION_NAME = 'transactions';
+const TRANSLATIONS_COLLECTION_NAME = 'translations';
+const DEFAULT_TIMEZONE = 'Asia/Jerusalem';
+
+
 /**
  * Function to format transaction for Telegram
  * @param {any} transaction 
  * @returns {string} Formatted transaction
  */
 function format(transaction) {
-  let date = moment(transaction.date).tz("Asia/Jerusalem");
-  let processedDate = moment(transaction.processedDate).tz("Asia/Jerusalem");
+  let date = moment(transaction.date).tz(DEFAULT_TIMEZONE);
+  let processedDate = moment(transaction.processedDate).tz(DEFAULT_TIMEZONE);
 
   // If time equals 00:00:00, format without time
   date = date.format('HH:mm:ss') === '00:00:00' ? date.format('YYYY-MM-DD') : date.format('YYYY-MM-DD HH:mm:ss');
@@ -74,7 +81,7 @@ async function translateDescriptions(descriptions) {
   // Note: The first line of the response corresponds to the translation of the first phrase from the request.
   // This is why the first line is ignored (traslations.slice(1)).
   // This is done to form a list of phrases that can be more clearly understood by the GPT when there is only one phrase.
-  let traslations = response.text.split('\n');
+  let traslations = response.text.split('\n').map(translation => translation.trim());
   if (traslations.length !== descriptions.length + 1) {
     throw new Error(`Number of translations (${traslations.length}) does not match number of descriptions (${descriptions.length})`);
   }
@@ -83,34 +90,99 @@ async function translateDescriptions(descriptions) {
 }
 
 /**
- * Function to get list of translations for given descriptions
+ * Function to put translation to cache
+ * @param {string} description
+ * @param {string} translation
+ */
+async function setTranslationToCache(description, translation) {
+  const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
+  try {
+    await client.connect();
+    const database = client.db(DB_NAME);
+    const translations = database.collection(TRANSLATIONS_COLLECTION_NAME);
+
+    try {
+      await translations.insertOne({ _id: description, translation: translation });
+    } catch (error) {
+      if (error.code !== 11000) { // Ignore duplicate key error
+        throw error;
+      }
+    }
+  } finally {
+    await client.close();
+  }
+}
+
+/**
+ * Function to get translation from cache
+ * @param {string} description
+ * @returns {Promise<string>} Cached translation
+ */
+async function getTranslationFromCache(description) {
+  const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
+  try {
+    await client.connect();
+    const database = client.db(DB_NAME);
+    const translations = database.collection(TRANSLATIONS_COLLECTION_NAME);
+    const doc = await translations.findOne({ _id: description });
+    return doc ? doc.translation : null;
+  } finally {
+    await client.close();
+  }
+}
+
+
+/**
+ * Function to get list of translations for given descriptions from cache or OpenAI Chat API
  * @param {any[]} transaction
  * @returns {Promise<string[]>} Translated descriptions
  */
 async function getTranslations(transactions) {
-  let descriptionsToTranslate = [];
-  transactions.forEach((transaction) => {
-    let description = transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
-    descriptionsToTranslate.push(description);
+  const descriptionsToTranslate = transactions.map(transaction => {
+    return transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
   });
 
-  try {
-    // Fetch translations in bulk
-    const translations = await retry(async () => {
-      return await translateDescriptions(descriptionsToTranslate);
-    }, {
-      retries: 5,
-      factor: 2,
-      minTimeout: 20000,
-      randomize: true
-    });
-
-    return translations;
-  } catch (err) {
-    // If the request still fails after all retries, log the error
-    console.error(`Failed to translate descriptions: ${err}`);
+  let translations = [];
+  let uniqueNotCachedDescrs = new Set();
+  let cachedTranslations = {};
+  
+  for (const description of descriptionsToTranslate) {
+    let cachedTranslation = await getTranslationFromCache(description);
+    if (cachedTranslation) {
+      cachedTranslations[description] = cachedTranslation;
+    } else {
+      uniqueNotCachedDescrs.add(description);
+    }
   }
+
+  uniqueNotCachedDescrs = Array.from(uniqueNotCachedDescrs);
+
+  if (uniqueNotCachedDescrs.length > 0) {
+    try {
+      const newTranslations = await retry(async () => {
+        return await translateDescriptions(uniqueNotCachedDescrs);
+      }, {
+        retries: 5,
+        factor: 2,
+        minTimeout: 20000,
+        randomize: true
+      });
+
+      for (let i = 0; i < uniqueNotCachedDescrs.length; i++) {
+        await setTranslationToCache(uniqueNotCachedDescrs[i], newTranslations[i]);
+        cachedTranslations[uniqueNotCachedDescrs[i]] = newTranslations[i];
+      }
+    } catch (err) {
+      console.error(`Failed to translate descriptions: ${err}`);
+    }
+  }
+
+  // Form a list of translations in the same order as the list of transactions
+  translations = descriptionsToTranslate.map(description => cachedTranslations[description]);
+  
+  return translations;
 }
+
 
 /**
  * Function to get existing transactions from db (by date, chargedAmount, description, processedDate, status and translatedDescription)
@@ -121,8 +193,8 @@ async function getExistingTransactions(transactions) {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
   try {
     await client.connect();
-    const database = client.db("transactionsDB");
-    const transCollection = database.collection("transactions");
+    const database = client.db(DB_NAME);
+    const transCollection = database.collection(TRANSACTIONS_COLLECTION_NAME);
 
     const query = {
       $or: transactions.map(transaction => ({
@@ -160,8 +232,8 @@ async function saveOrUpdate(transaction) {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
   try {
     await client.connect();
-    const database = client.db("transactionsDB");
-    const transCollection = database.collection("transactions");
+    const database = client.db(DB_NAME);
+    const transCollection = database.collection(TRANSACTIONS_COLLECTION_NAME);
 
     // Check if transaction already exists
     const existingTransaction = await transCollection.findOne({
@@ -276,7 +348,7 @@ async function handleTransactions(user, companyId, credentials, chatId, startDat
       return !existingTransactions.has(key);
     });
 
-    const chunkSize = 20; // to not exceed token limit in OpenAI Chat API while translating
+    const chunkSize = 30; // to not exceed token limit in OpenAI Chat API while translating
     let chunkCount = Math.ceil(transactions.length / chunkSize);
 
     for (let i = 0; i < chunkCount; i++) {
@@ -292,7 +364,7 @@ async function handleTransactions(user, companyId, credentials, chatId, startDat
       });
 
       for (const transaction of currentTransactions) {
-        const isNewTransaction = !!await saveOrUpdate(transaction);
+        const isNewTransaction = await saveOrUpdate(transaction);
         // Send notification only if transaction is new
         if (isNewTransaction) {
           await notify(transaction, chatId);
@@ -363,7 +435,7 @@ users.forEach((user) => {
     cron.schedule(process.env.TRANSACTION_SYNC_SCHEDULE, () => {
       handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId, startDate);
     }, {
-      timezone: 'Asia/Jerusalem'
+      timezone: DEFAULT_TIMEZONE
     });
   });
 });

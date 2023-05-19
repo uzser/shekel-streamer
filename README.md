@@ -68,6 +68,8 @@ Respond in a one-column TSV format.
 
 In this example, `<text_to_replace>` is a placeholder where the original descriptions of transactions will be placed for translation. You can add a list of custom phrases and their correct translations to the prompt. The system will then recognize these phrases and translate them accordingly.
 
+Additionally, to optimize the translation process and avoid redundant API calls, translations are cached in the database. The caching system checks for existing translations in the database before sending requests to the OpenAI API. Therefore, repeated phrases or descriptions in the transactions are translated only once, reducing the load on the API and speeding up the translation process.
+
 ## **Contributing**
 
 Please feel free to submit issues or pull requests for any improvements or bug fixes. Your contributions are always welcome!
