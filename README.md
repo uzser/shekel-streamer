@@ -2,7 +2,7 @@
 
 This project uses a series of configurable environment variables to automatically scrape financial transactions, store them in a MongoDB database, translate their descriptions using the OpenAI API, and finally send them to specified Telegram channels. This system uses a cron job to regularly pull new transactions, which are processed and stored.
 
-![Screenshot](screenshots/shekel-streamer-example.jpg?raw=true "ShekelStreamer example")
+![Screenshot](screenshots/shekel-streamer-example.png?raw=true "Shekel Streamer example")
 
 ## **Features**
 

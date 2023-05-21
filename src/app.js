@@ -4,7 +4,7 @@ dotenv.config();
 import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
 import { MongoClient } from 'mongodb';
 import TelegramBot from 'node-telegram-bot-api';
-import cron from 'node-cron';
+import { CronJob } from 'cron';
 import moment from 'moment-timezone';
 import { ChatGPTAPI } from 'chatgpt';
 import retry from 'async-retry';
@@ -12,10 +12,10 @@ import puppeteer from 'puppeteer';
 import winston from 'winston';
 
 
-const DB_NAME = 'shekelStreamerDB';
-const TRANSACTIONS_COLLECTION_NAME = 'transactions';
-const TRANSLATIONS_COLLECTION_NAME = 'translations';
-const DEFAULT_TIMEZONE = 'Asia/Jerusalem';
+const DB_NAME = process.env.DB_NAME || 'shekelStreamerDB';
+const TRANSACTIONS_COLLECTION_NAME = process.env.TRANSACTIONS_COLLECTION_NAME || 'transactions';
+const TRANSLATIONS_COLLECTION_NAME = process.env.TRANSLATIONS_COLLECTION_NAME || 'translations';
+const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
 
 
 const logger = winston.createLogger({
@@ -212,7 +212,8 @@ async function getTranslations(transactions) {
         cachedTranslations[uniqueNotCachedDescrs[i]] = newTranslations[i];
       }
     } catch (error) {
-      logger.error(`Failed to translate descriptions`, { error, descriptions: uniqueNotCachedDescrs });
+      logger.error(`Failed to translate descriptions`,
+        { descriptions: uniqueNotCachedDescrs, errorMessage: error.message, errorStack: error.stack });
     }
   }
 
@@ -309,8 +310,8 @@ async function saveOrUpdate(transaction) {
 
 /**
  * Function to send transaction to Telegram chat with retries
- * @param {any} transaction 
- * @param {string} chatId
+ * @param {any} transaction
+ * @param {string} chatId Telegram chat ID
  */
 async function notify(transaction, chatId) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !chatId) {
@@ -330,27 +331,26 @@ async function notify(transaction, chatId) {
     });
   } catch (error) {
     // If the request still fails after all retries, log the error
-    logger.error(`Failed to send message to Telegram`, { error, transactionDbId: transaction._id, chatId });
+    logger.error(`Failed to send message to Telegram`,
+      { transactionDbId: transaction._id, chatId, errorMessage: error.message, errorStack: error.stack });
   }
 }
 
 /**
  * Function to scrape bank transactions, store to MongoDB and send to Telegram chat
- * @param {string} user
- * @param {CompanyTypes} companyId
- * @param {any} credentials
- * @param {string} chatId
+ * @param {any} taskDetails { user: string, company: CompanyTypes }
+ * @param {any} credentials Credentials for the financial service
+ * @param {string} chatId Telegram chat ID
  */
-async function handleTransactions(user, companyId, credentials, chatId) {
+async function handleTransactions(taskDetails, credentials, chatId) {
 
   const daysCount = Number(process.env.SCRAPING_DAYS_COUNT) || 7;
   const initialScrapeDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
-  const meta = { user, companyId };
-  logger.info(`Scraping started...`, { ...meta, initialScrapeDate });
+  logger.info(`Scraping started...`, { ...taskDetails, initialScrapeDate });
 
   let scraperOptions = {
-    companyId: companyId,
+    companyId: taskDetails.company,
     startDate: initialScrapeDate,
     combineInstallments: false,
     timeout: 0, // no timeout
@@ -389,14 +389,14 @@ async function handleTransactions(user, companyId, credentials, chatId) {
           identifier: txn.identifier, // can be null
           processedDate: new Date(txn.processedDate),
           installments: txn.installments, // can be null
-          companyId: companyId,
-          userCode: user,
+          companyId: taskDetails.company,
+          userCode: taskDetails.user,
           chatId: chatId
         });
       });
     });
 
-    logger.info(`Total transactions found: ${transactions.length}`, meta);
+    logger.info(`Total transactions found: ${transactions.length}`, taskDetails);
 
     // Sort transactions by date from oldest to newest
     transactions.sort((a, b) => a.date - b.date)
@@ -440,13 +440,13 @@ async function handleTransactions(user, companyId, credentials, chatId) {
           counters.updated++;
         }
       }
-      logger.info(`New transactions processed: ${counters.new}`, meta);
-      logger.info(`Transactions updated: ${counters.updated}`, meta);
+      logger.info(`New transactions processed: ${counters.new}`, taskDetails);
+      logger.info(`Transactions updated: ${counters.updated}`, taskDetails);
     }
-    logger.info(`Scraping finished`, meta);
+    logger.info(`Scraping finished`, taskDetails);
   } else {
     logger.error(`Scraping failed`,
-      { ...meta, errorType: scrapeResult.errorType, errorMessage: scrapeResult.errorMessage });
+      { ...taskDetails, errorType: scrapeResult.errorType, errorMessage: scrapeResult.errorMessage });
   }
 }
 
@@ -497,18 +497,23 @@ users.forEach((user) => {
       return;
     }
 
-    handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
+    const taskDetails = { user, company: CompanyTypes[companyTypeKey] };
+
+    // Handle transactions for this user
+    handleTransactions(taskDetails, credentials, chatId)
+      .catch((error) => logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack }));
 
     // Schedule cron job for this user
-    if (!cron.validate(process.env.TRANSACTION_SYNC_SCHEDULE)) {
-      logger.error(`Invalid cron schedule: ${process.env.TRANSACTION_SYNC_SCHEDULE}`);
-      return;
-    }
+    const scheduledTask = new CronJob(process.env.TRANSACTION_SYNC_SCHEDULE, async function () {
+      try {
+        await handleTransactions(taskDetails, credentials, chatId);
+      } catch (error) {
+        logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack });
+      }
+      logger.info(`Next scheduled run: ${this.nextDate()}`, { taskDetails });
+    }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
 
-    cron.schedule(process.env.TRANSACTION_SYNC_SCHEDULE, () => {
-      handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
-    }, {
-      timezone: DEFAULT_TIMEZONE
-    });
+    scheduledTask.start();
+    logger.info(`Next scheduled: ${scheduledTask.nextDate()}`, taskDetails);
   });
 });
