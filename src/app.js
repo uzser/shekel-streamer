@@ -8,6 +8,8 @@ import cron from 'node-cron';
 import moment from 'moment-timezone';
 import { ChatGPTAPI } from 'chatgpt';
 import retry from 'async-retry';
+import puppeteer from 'puppeteer';
+import winston from 'winston';
 
 
 const DB_NAME = 'shekelStreamerDB';
@@ -15,6 +17,43 @@ const TRANSACTIONS_COLLECTION_NAME = 'transactions';
 const TRANSLATIONS_COLLECTION_NAME = 'translations';
 const DEFAULT_TIMEZONE = 'Asia/Jerusalem';
 
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DDTHH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format((info) => {
+      const { timestamp, level, message, ...rest } = info;
+      return { timestamp, level, message, ...rest };
+    })(),
+    winston.format.json({ deterministic: false })
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' }),
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.printf(info => {
+          const { timestamp, level, message, ...rest } = info;
+          return `${timestamp} ${level}: ${message}${(Object.keys(rest).length > 0) ? ' ' + JSON.stringify(rest) : ''}`
+        })
+      )
+    })
+  ]
+});
+
+logger.info('Starting Shekel Streamer...');
+
+const isTrnaslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
+  && process.env.GPT_TRANSLATION_PROMPT && process.env.GPT_TRANSLATION_PROMPT.includes('<text_to_replace>');
+
+if (!isTrnaslationEnabled) {
+  logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
+}
 
 /**
  * Function to format transaction for Telegram
@@ -53,9 +92,7 @@ Status: ${transaction.status}
 async function translateDescriptions(descriptions) {
   const placeholder = '<text_to_replace>';
 
-  if (!process.env.OPENAI_API_KEY || !process.env.GPT_MODEL_FAST || !process.env.GPT_TRANSLATION_PROMPT
-    || !process.env.GPT_TRANSLATION_PROMPT.includes(placeholder)) {
-    console.log('No OpenAI API key or GPT model or GPT translation prompt found. Skipping translation.');
+  if (!isTrnaslationEnabled) {
     return descriptions.map(_ => null);
   }
 
@@ -68,12 +105,12 @@ async function translateDescriptions(descriptions) {
   });
 
   // Join all descriptions into one string
-  const description = descriptions.join('\n');
+  const descriptionsString = descriptions.join('\n');
 
-  const prompt = process.env.GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(placeholder, description);
-  const response = await api.sendMessage(prompt)
+  const request = process.env.GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(placeholder, descriptionsString);
+  const response = await api.sendMessage(request)
 
-  console.log(`Request:\n${prompt}\n\nResponse:\n${response.text}\n`);
+  logger.info("Translation result was received", { request: descriptionsString, response: response.text });
 
   // Split the text into lines and obtain translations from the response in the format:
   // "translate1
@@ -83,7 +120,9 @@ async function translateDescriptions(descriptions) {
   // This is done to form a list of phrases that can be more clearly understood by the GPT when there is only one phrase.
   let traslations = response.text.split('\n').map(translation => translation.trim());
   if (traslations.length !== descriptions.length + 1) {
-    throw new Error(`Number of translations (${traslations.length}) does not match number of descriptions (${descriptions.length})`);
+    const errorMessage = `Number of translations (${traslations.length}) does not match number of descriptions (${descriptions.length})`;
+    logger.warn(errorMessage, { descriptions, traslations });
+    throw new Error(errorMessage);
   }
 
   return traslations.slice(1);
@@ -145,7 +184,7 @@ async function getTranslations(transactions) {
   let translations = [];
   let uniqueNotCachedDescrs = new Set();
   let cachedTranslations = {};
-  
+
   for (const description of descriptionsToTranslate) {
     let cachedTranslation = await getTranslationFromCache(description);
     if (cachedTranslation) {
@@ -172,14 +211,14 @@ async function getTranslations(transactions) {
         await setTranslationToCache(uniqueNotCachedDescrs[i], newTranslations[i]);
         cachedTranslations[uniqueNotCachedDescrs[i]] = newTranslations[i];
       }
-    } catch (err) {
-      console.error(`Failed to translate descriptions: ${err}`);
+    } catch (error) {
+      logger.error(`Failed to translate descriptions`, { error, descriptions: uniqueNotCachedDescrs });
     }
   }
 
   // Form a list of translations in the same order as the list of transactions
   translations = descriptionsToTranslate.map(description => cachedTranslations[description]);
-  
+
   return translations;
 }
 
@@ -275,7 +314,7 @@ async function saveOrUpdate(transaction) {
  */
 async function notify(transaction, chatId) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !chatId) {
-    console.log('No Telegram bot token or chat ID found. Skipping notification.');
+    logger.info('No Telegram bot token or chat ID found. Skipping notification.');
     return;
   }
 
@@ -289,9 +328,9 @@ async function notify(transaction, chatId) {
       minTimeout: 30 * 1000, // 30 seconds
       randomize: true,
     });
-  } catch (err) {
+  } catch (error) {
     // If the request still fails after all retries, log the error
-    console.error(`Failed to send message to Telegram: ${err}`);
+    logger.error(`Failed to send message to Telegram`, { error, transactionDbId: transaction._id, chatId });
   }
 }
 
@@ -302,15 +341,35 @@ async function notify(transaction, chatId) {
  * @param {any} credentials
  * @param {string} chatId
  */
-async function handleTransactions(user, companyId, credentials, chatId, startDate) {
-  const scraper = createScraper({
-    companyId: companyId,
-    startDate: startDate,
-    combineInstallments: false,
-    timeout: 0 // no timeout
-  });
+async function handleTransactions(user, companyId, credentials, chatId) {
 
-  const scrapeResult = await scraper.scrape(credentials);
+  const daysCount = Number(process.env.SCRAPING_DAYS_COUNT) || 7;
+  const initialScrapeDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
+
+  const meta = { user, companyId };
+  logger.info(`Scraping started...`, { ...meta, initialScrapeDate });
+
+  let scraperOptions = {
+    companyId: companyId,
+    startDate: initialScrapeDate,
+    combineInstallments: false,
+    timeout: 0, // no timeout
+  }
+
+  if (process.env.DOCKER) {
+    scraperOptions.browser = await puppeteer.launch({
+      headless: "new",
+      executablePath: '/usr/bin/chromium-browser',
+      args: [
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-setuid-sandbox",
+        "--no-sandbox",
+      ]
+    })
+  }
+
+  const scrapeResult = await createScraper(scraperOptions).scrape(credentials);
 
   if (scrapeResult.success) {
     let transactions = [];
@@ -337,6 +396,8 @@ async function handleTransactions(user, companyId, credentials, chatId, startDat
       });
     });
 
+    logger.info(`Total transactions found: ${transactions.length}`, meta);
+
     // Sort transactions by date from oldest to newest
     transactions.sort((a, b) => a.date - b.date)
 
@@ -358,6 +419,11 @@ async function handleTransactions(user, companyId, credentials, chatId, startDat
       // Create a list of descriptions to translate
       const translations = await getTranslations(currentTransactions);
 
+      let counters = {
+        new: 0,
+        updated: 0
+      };
+
       // Assign translations back to current transactions
       currentTransactions.forEach((transaction, index) => {
         transaction.translatedDescription = translations[index];
@@ -365,14 +431,22 @@ async function handleTransactions(user, companyId, credentials, chatId, startDat
 
       for (const transaction of currentTransactions) {
         const isNewTransaction = await saveOrUpdate(transaction);
+
         // Send notification only if transaction is new
         if (isNewTransaction) {
+          counters.new++;
           await notify(transaction, chatId);
+        } else {
+          counters.updated++;
         }
       }
+      logger.info(`New transactions processed: ${counters.new}`, meta);
+      logger.info(`Transactions updated: ${counters.updated}`, meta);
     }
+    logger.info(`Scraping finished`, meta);
   } else {
-    console.error(`Scraping failed for the following reason: ${scrapeResult.errorType} - ${scrapeResult.errorMessage}`);
+    logger.error(`Scraping failed`,
+      { ...meta, errorType: scrapeResult.errorType, errorMessage: scrapeResult.errorMessage });
   }
 }
 
@@ -419,21 +493,20 @@ users.forEach((user) => {
     // Get CompanyTypes key from config company name
     const companyTypeKey = findKeyCaseInsensitive(CompanyTypes, company);
     if (!companyTypeKey) {
-      console.error(`Unknown company: ${company}`);
+      logger.error(`Unknown company: ${company}`);
       return;
     }
 
-    // a week ago
-    let startDate = new Date(new Date().setDate(new Date().getDate() - 7));
-    // a month ago
-    // let startDate = new Date(new Date().setMonth(new Date().getMonth() - 1));
-    // a year ago
-    // let startDate = new Date(new Date().setFullYear(new Date().getFullYear() - 1));
+    handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
 
-    handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId, startDate);
+    // Schedule cron job for this user
+    if (!cron.validate(process.env.TRANSACTION_SYNC_SCHEDULE)) {
+      logger.error(`Invalid cron schedule: ${process.env.TRANSACTION_SYNC_SCHEDULE}`);
+      return;
+    }
 
     cron.schedule(process.env.TRANSACTION_SYNC_SCHEDULE, () => {
-      handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId, startDate);
+      handleTransactions(user, CompanyTypes[companyTypeKey], credentials, chatId);
     }, {
       timezone: DEFAULT_TIMEZONE
     });
