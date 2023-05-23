@@ -43,7 +43,7 @@ function configureLogger() {
       )
     })
   ];
-  
+
   // Log to files only if not running in Docker because of permission issues with Docker volumes
   // Use Docker logging instead (docker-compose logs -f, for example)
   if (!process.env.DOCKER) {
@@ -52,7 +52,7 @@ function configureLogger() {
       new winston.transports.File({ filename: 'logs/combined.log' })
     );
   }
-  
+
   const logger = winston.createLogger({
     level: 'info',
     format: winston.format.combine(
@@ -246,6 +246,10 @@ async function getTranslations(transactions) {
  */
 async function getExistingTransactions(transactions) {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
+  if (transactions.length === 0) {
+    return new Set();
+  }
+
   try {
     await client.connect();
     const database = client.db(DB_NAME);
@@ -411,6 +415,11 @@ async function handleTransactions(taskDetails, credentials, chatId) {
       });
     });
 
+    if (transactions.length === 0) {
+      logger.info(`No transactions found.`, taskDetails);
+      return;
+    }
+
     logger.info(`Total transactions found: ${transactions.length}`, taskDetails);
 
     // Sort transactions by date from oldest to newest
@@ -419,10 +428,17 @@ async function handleTransactions(taskDetails, credentials, chatId) {
     const existingTransactions = await getExistingTransactions(transactions);
 
     // Filter out the transactions that already exist in the db and don't need to be updated
-    transactions = transactions.filter(transaction => {
-      const key = transaction.date + transaction.chargedAmount + transaction.description + transaction.processedDate + transaction.status;
-      return !existingTransactions.has(key);
-    });
+    if (existingTransactions.size > 0) {
+      transactions = existingTransactions.size > 0 ? transactions.filter(transaction => {
+        const key = transaction.date + transaction.chargedAmount + transaction.description + transaction.processedDate + transaction.status;
+        return !existingTransactions.has(key);
+      }) : transactions;
+    }
+
+    let counters = {
+      new: 0,
+      updated: 0
+    };
 
     const chunkSize = 30; // to not exceed token limit in OpenAI Chat API while translating
     let chunkCount = Math.ceil(transactions.length / chunkSize);
@@ -433,11 +449,6 @@ async function handleTransactions(taskDetails, credentials, chatId) {
 
       // Create a list of descriptions to translate
       const translations = await getTranslations(currentTransactions);
-
-      let counters = {
-        new: 0,
-        updated: 0
-      };
 
       // Assign translations back to current transactions
       currentTransactions.forEach((transaction, index) => {
@@ -455,10 +466,9 @@ async function handleTransactions(taskDetails, credentials, chatId) {
           counters.updated++;
         }
       }
-      logger.info(`New transactions processed: ${counters.new}`, taskDetails);
-      logger.info(`Transactions updated: ${counters.updated}`, taskDetails);
     }
-    logger.info(`Scraping finished`, taskDetails);
+
+    logger.info(`Scraping finished. New: ${counters.new}, updated: ${counters.updated}`, taskDetails);
   } else {
     logger.error(`Scraping failed`,
       { ...taskDetails, errorType: scrapeResult.errorType, errorMessage: scrapeResult.errorMessage });
