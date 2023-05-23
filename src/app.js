@@ -17,23 +17,22 @@ const TRANSACTIONS_COLLECTION_NAME = process.env.TRANSACTIONS_COLLECTION_NAME ||
 const TRANSLATIONS_COLLECTION_NAME = process.env.TRANSLATIONS_COLLECTION_NAME || 'translations';
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
 
+configureLogger();
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp({
-      format: 'YYYY-MM-DDTHH:mm:ss'
-    }),
-    winston.format.errors({ stack: true }),
-    winston.format((info) => {
-      const { timestamp, level, message, ...rest } = info;
-      return { timestamp, level, message, ...rest };
-    })(),
-    winston.format.json({ deterministic: false })
-  ),
-  transports: [
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
+logger.info('Starting Shekel Streamer...');
+
+const isTrnaslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
+  && process.env.GPT_TRANSLATION_PROMPT && process.env.GPT_TRANSLATION_PROMPT.includes('<text_to_replace>');
+
+if (!isTrnaslationEnabled) {
+  logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
+}
+
+/**
+ * Function to configure logger using Winston
+ */
+function configureLogger() {
+  const transports = [
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
@@ -43,16 +42,32 @@ const logger = winston.createLogger({
         })
       )
     })
-  ]
-});
-
-logger.info('Starting Shekel Streamer...');
-
-const isTrnaslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
-  && process.env.GPT_TRANSLATION_PROMPT && process.env.GPT_TRANSLATION_PROMPT.includes('<text_to_replace>');
-
-if (!isTrnaslationEnabled) {
-  logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
+  ];
+  
+  // Log to files only if not running in Docker because of permission issues with Docker volumes
+  // Use Docker logging instead (docker-compose logs -f, for example)
+  if (!process.env.DOCKER) {
+    transports.push(
+      new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+      new winston.transports.File({ filename: 'logs/combined.log' })
+    );
+  }
+  
+  const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+      winston.format.timestamp({
+        format: 'YYYY-MM-DDTHH:mm:ss'
+      }),
+      winston.format.errors({ stack: true }),
+      winston.format((info) => {
+        const { timestamp, level, message, ...rest } = info;
+        return { timestamp, level, message, ...rest };
+      })(),
+      winston.format.json({ deterministic: false })
+    ),
+    transports
+  });
 }
 
 /**

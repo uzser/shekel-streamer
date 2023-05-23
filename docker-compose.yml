@@ -5,6 +5,4 @@ services:
       context: .
       dockerfile: Dockerfile
     image: shekel-streamer
-    volumes:
-      - ./logs:/app/logs
     restart: always
