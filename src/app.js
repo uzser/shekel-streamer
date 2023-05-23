@@ -17,7 +17,7 @@ const TRANSACTIONS_COLLECTION_NAME = process.env.TRANSACTIONS_COLLECTION_NAME ||
 const TRANSLATIONS_COLLECTION_NAME = process.env.TRANSLATIONS_COLLECTION_NAME || 'translations';
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
 
-configureLogger();
+const logger = configureLogger();
 
 logger.info('Starting Shekel Streamer...');
 
@@ -53,7 +53,7 @@ function configureLogger() {
     );
   }
 
-  const logger = winston.createLogger({
+  return winston.createLogger({
     level: 'info',
     format: winston.format.combine(
       winston.format.timestamp({
