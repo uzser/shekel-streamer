@@ -19,7 +19,7 @@ This project uses a series of configurable environment variables to automaticall
 | --- | --- | --- |
 | MONGO_CONNECTION_STRING | MongoDB connection string | mongodb://localhost:27017 |
 | TELEGRAM_BOT_TOKEN | Telegram bot token for sending notifications | 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11 |
-| TRANSACTION_SYNC_SCHEDULE | Cron schedule for getting new transactions | `0 8 * * *` |
+| SYNC_SCHEDULE | Cron schedule for getting new transactions | `0 8 * * *` |
 | USERS | Comma-separated list of users to scrape | USER1,USER2,JOHN,MARY |
 | USERX_TELEGRAM_CHANNEL_ID | Telegram channel ID for user X | -1001234567890 |
 | USERX_COMPANY_Y_CREDENTIALS | User X's credentials for company Y | JOHN_HAPOALIM_USER_CODE |

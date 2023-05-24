@@ -363,7 +363,7 @@ async function notify(transaction, chatId) {
  */
 async function handleTransactions(taskDetails, credentials, chatId) {
 
-  const daysCount = Number(process.env.SCRAPING_DAYS_COUNT) || 7;
+  const daysCount = Number(process.env.SYNC_DAYS_COUNT) || 7;
   const initialScrapeDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
   logger.info(`Scraping started...`, { ...taskDetails, initialScrapeDate });
@@ -375,7 +375,7 @@ async function handleTransactions(taskDetails, credentials, chatId) {
     timeout: 0, // no timeout
   }
 
-  if (process.env.DOCKER) {
+  if (process.env.DOCKER === 'true') {
     scraperOptions.browser = await puppeteer.launch({
       headless: "new",
       executablePath: '/usr/bin/chromium-browser',
@@ -524,21 +524,25 @@ users.forEach((user) => {
 
     const taskDetails = { user, company: CompanyTypes[companyTypeKey] };
 
-    // Handle transactions for this user
-    handleTransactions(taskDetails, credentials, chatId)
-      .catch((error) => logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack }));
+    // Run scraping on startup if it's configured
+    if (process.env.SYNC_ON_STARTUP === 'true') {
+      handleTransactions(taskDetails, credentials, chatId)
+        .catch((error) => logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack }));
+    }
 
-    // Schedule cron job for this user
-    const scheduledTask = new CronJob(process.env.TRANSACTION_SYNC_SCHEDULE, async function () {
-      try {
-        await handleTransactions(taskDetails, credentials, chatId);
-      } catch (error) {
-        logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack });
-      }
-      logger.info(`Next scheduled run: ${this.nextDate()}`, { taskDetails });
-    }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
+    // Schedule cron job for this user and company if it's configured
+    if (process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE) {
+      const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
+        try {
+          await handleTransactions(taskDetails, credentials, chatId);
+        } catch (error) {
+          logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack });
+        }
+        logger.info(`Next scheduled run: ${this.nextDate()}`, { taskDetails });
+      }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
 
-    scheduledTask.start();
-    logger.info(`Next scheduled: ${scheduledTask.nextDate()}`, taskDetails);
+      scheduledTask.start();
+      logger.info(`Next scheduled: ${scheduledTask.nextDate()}`, taskDetails);
+    }
   });
 });
