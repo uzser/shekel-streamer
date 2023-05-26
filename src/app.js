@@ -5,7 +5,7 @@ import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
 import { MongoClient } from 'mongodb';
 import TelegramBot from 'node-telegram-bot-api';
 import { CronJob } from 'cron';
-import moment from 'moment-timezone';
+import { DateTime } from 'luxon';
 import { ChatGPTAPI } from 'chatgpt';
 import retry from 'async-retry';
 import puppeteer from 'puppeteer';
@@ -26,6 +26,53 @@ const isTrnaslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL
 
 if (!isTrnaslationEnabled) {
   logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
+}
+
+const transactionSyncTasks = getTransactionSyncTasks();
+if (transactionSyncTasks.length === 0) {
+  logger.info('No transaction sync tasks found. Exiting.');
+  process.exit(0);
+}
+
+const isScheduled = process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE
+
+// Run sync on startup if it's configured
+if (process.env.SYNC_ON_STARTUP === 'true') {
+  processTransactionSyncTasks(transactionSyncTasks)
+    .then(() => {
+      if (!isScheduled) {
+        logger.info('Sync on schedule is disabled. Exiting.');
+        process.exit(0);
+      }
+    });
+}
+
+
+// Schedule cron job for this user and company if it's configured
+if (isScheduled) {
+  const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
+    try {
+      await processTransactionSyncTasks(transactionSyncTasks);
+    } catch (error) {
+      logger.error(`Sync failed`, { errorMessage: error.message, errorStack: error.stack });
+    }
+    logger.info(`Next scheduled sync: ${timezoned(this.nextDate())}`);
+  }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
+
+  scheduledTask.start();
+
+  logger.info(`Next scheduled sync: ${timezoned(scheduledTask.nextDate())}`);
+}
+
+// End of main code
+
+/**
+ * Function to get ISO string with timezone set to DEFAULT_TIMEZONE
+ * @param {DateTime} dateTime Luxon DateTime object
+ * @returns {string} ISO string with timezone set to DEFAULT_TIMEZONE
+ */
+function timezoned(dateTime) {
+  return dateTime.setZone(DEFAULT_TIMEZONE).toFormat('yyyy-MM-dd\'T\'HH:mm:ssZZ');
 }
 
 /**
@@ -57,7 +104,7 @@ function configureLogger() {
     level: 'info',
     format: winston.format.combine(
       winston.format.timestamp({
-        format: 'YYYY-MM-DDTHH:mm:ss'
+        format: () => timezoned(DateTime.local())
       }),
       winston.format.errors({ stack: true }),
       winston.format((info) => {
@@ -71,17 +118,30 @@ function configureLogger() {
 }
 
 /**
+ * Formats transaction date and removes time if it's 00:00:00
+ * @param {string} jsDate 
+ * @returns The formatted date string in the DEFAULT_TIMEZONE
+ */
+function formatDateTime(jsDate) {
+  let dateTime = DateTime.fromJSDate(jsDate, { zone: 'Asia/Jerusalem' });
+
+  // If time equals 00:00:00, format without time
+  if (dateTime.hour === 0 && dateTime.minute === 0 && dateTime.second === 0) {
+    return dateTime.toFormat('yyyy-MM-dd');
+  }
+
+  // Re-parse the dateTime in the DEFAULT_TIMEZONE
+  return dateTime.setZone(DEFAULT_TIMEZONE).toFormat('yyyy-MM-dd HH:mm:ss');
+}
+
+/**
  * Function to format transaction for Telegram
  * @param {any} transaction 
  * @returns {string} Formatted transaction
  */
 function format(transaction) {
-  let date = moment(transaction.date).tz(DEFAULT_TIMEZONE);
-  let processedDate = moment(transaction.processedDate).tz(DEFAULT_TIMEZONE);
-
-  // If time equals 00:00:00, format without time
-  date = date.format('HH:mm:ss') === '00:00:00' ? date.format('YYYY-MM-DD') : date.format('YYYY-MM-DD HH:mm:ss');
-  processedDate = processedDate.format('HH:mm:ss') === '00:00:00' ? processedDate.format('YYYY-MM-DD') : processedDate.format('YYYY-MM-DD HH:mm:ss');
+  let date = formatDateTime(transaction.date);
+  let processedDate = formatDateTime(transaction.processedDate);
 
   const chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
   const incomeOrExpenseEmoji = transaction.chargedAmount > 0 ? '💰' : '💸'; // 💰 for income, 💸 for expense
@@ -125,6 +185,7 @@ async function translateDescriptions(descriptions) {
   const request = process.env.GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(placeholder, descriptionsString);
   const response = await api.sendMessage(request)
 
+  // Note: response can include extra translanslation in the the beginning. Details are below.
   logger.info("Translation result was received", { request: descriptionsString, response: response.text });
 
   // Split the text into lines and obtain translations from the response in the format:
@@ -356,21 +417,21 @@ async function notify(transaction, chatId) {
 }
 
 /**
- * Function to scrape bank transactions, store to MongoDB and send to Telegram chat
- * @param {any} taskDetails { user: string, company: CompanyTypes }
+ * Function to sync bank transactions, store to MongoDB and send to Telegram chat
+ * @param {any} taskKey { user: string, company: CompanyTypes }
  * @param {any} credentials Credentials for the financial service
  * @param {string} chatId Telegram chat ID
  */
-async function handleTransactions(taskDetails, credentials, chatId) {
+async function handleTransactions(taskKey, credentials, chatId) {
 
   const daysCount = Number(process.env.SYNC_DAYS_COUNT) || 7;
-  const initialScrapeDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
+  const initialSyncDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
-  logger.info(`Scraping started...`, { ...taskDetails, initialScrapeDate });
+  logger.info(`Sync started...`, { ...taskKey, initialSyncDate: DateTime.fromJSDate(initialSyncDate).toISODate() });
 
   let scraperOptions = {
-    companyId: taskDetails.company,
-    startDate: initialScrapeDate,
+    companyId: taskKey.company,
+    startDate: initialSyncDate,
     combineInstallments: false,
     timeout: 0, // no timeout
   }
@@ -388,11 +449,11 @@ async function handleTransactions(taskDetails, credentials, chatId) {
     })
   }
 
-  const scrapeResult = await createScraper(scraperOptions).scrape(credentials);
+  const syncResult = await createScraper(scraperOptions).scrape(credentials);
 
-  if (scrapeResult.success) {
+  if (syncResult.success) {
     let transactions = [];
-    scrapeResult.accounts.forEach((account) => {
+    syncResult.accounts.forEach((account) => {
       account.txns.forEach((txn) => {
         transactions.push({
           accountNumber: account.accountNumber,
@@ -408,19 +469,19 @@ async function handleTransactions(taskDetails, credentials, chatId) {
           identifier: txn.identifier, // can be null
           processedDate: new Date(txn.processedDate),
           installments: txn.installments, // can be null
-          companyId: taskDetails.company,
-          userCode: taskDetails.user,
+          companyId: taskKey.company,
+          userCode: taskKey.user,
           chatId: chatId
         });
       });
     });
 
     if (transactions.length === 0) {
-      logger.info(`No transactions found.`, taskDetails);
+      logger.info(`No transactions found.`, taskKey);
       return;
     }
 
-    logger.info(`Total transactions found: ${transactions.length}`, taskDetails);
+    logger.info(`Total transactions found: ${transactions.length}`, taskKey);
 
     // Sort transactions by date from oldest to newest
     transactions.sort((a, b) => a.date - b.date)
@@ -468,10 +529,10 @@ async function handleTransactions(taskDetails, credentials, chatId) {
       }
     }
 
-    logger.info(`Scraping finished. New: ${counters.new}, updated: ${counters.updated}`, taskDetails);
+    logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`, taskKey);
   } else {
-    logger.error(`Scraping failed`,
-      { ...taskDetails, errorType: scrapeResult.errorType, errorMessage: scrapeResult.errorMessage });
+    logger.error(`Sync failed`,
+      { ...taskKey, errorType: syncResult.errorType, errorMessage: syncResult.errorMessage });
   }
 }
 
@@ -491,58 +552,66 @@ function findKeyCaseInsensitive(object, targetKey) {
   return null;
 }
 
-const users = process.env.USERS.split(',');
+/**
+ * Get tasks for sync transactions
+ * @returns {Array} Array of tasks to be executed
+ */
+function getTransactionSyncTasks() {
+  const transactionSyncTasks = [];
 
-// For each user, scrape their transactions
-users.forEach((user) => {
-  // Get environment variables for this user
-  const userEnvVars = Object.keys(process.env).filter(
-    key => key.startsWith(`${user}_`) && !key.startsWith(`${user}_TELEGRAM`));
+  const users = process.env.USERS.split(',');
+  users.forEach((user) => {
+    // Get environment variables for this user
+    const userEnvVars = Object.keys(process.env).filter(
+      key => key.startsWith(`${user}_`) && !key.startsWith(`${user}_TELEGRAM`)
+    );
 
-  // Get unique company names from user's environment variables
-  const companies = [...new Set(userEnvVars.map(key => key.split('_')[1]))];
+    // Get unique company names from user's environment variables
+    const companies = [...new Set(userEnvVars.map(key => key.split('_')[1]))];
 
-  companies.forEach((company) => {
-    const credentials = {
-      id: process.env[`${user}_${company}_ID`],
-      num: process.env[`${user}_${company}_NUM`],
-      username: process.env[`${user}_${company}_USERNAME`],
-      userCode: process.env[`${user}_${company}_USER_CODE`],
-      password: process.env[`${user}_${company}_PASSWORD`],
-      card6Digits: process.env[`${user}_${company}_CARD6DIGITS`],
-      nationalID: process.env[`${user}_${company}_NATIONAL_ID`],
-    };
+    companies.forEach((company) => {
+      const credentials = {
+        id: process.env[`${user}_${company}_ID`],
+        num: process.env[`${user}_${company}_NUM`],
+        username: process.env[`${user}_${company}_USERNAME`],
+        userCode: process.env[`${user}_${company}_USER_CODE`],
+        password: process.env[`${user}_${company}_PASSWORD`],
+        card6Digits: process.env[`${user}_${company}_CARD6DIGITS`],
+        nationalID: process.env[`${user}_${company}_NATIONAL_ID`],
+      };
 
-    const chatId = process.env[`${user}_${company}_TELEGRAM_CHANNEL_ID`] || process.env[`${user}_TELEGRAM_CHANNEL_ID`];
+      const chatId = process.env[`${user}_${company}_TELEGRAM_CHANNEL_ID`] || process.env[`${user}_TELEGRAM_CHANNEL_ID`];
 
-    // Get CompanyTypes key from config company name
-    const companyTypeKey = findKeyCaseInsensitive(CompanyTypes, company);
-    if (!companyTypeKey) {
-      logger.error(`Unknown company: ${company}`);
-      return;
-    }
+      // Get CompanyTypes key from config company name
+      const companyTypeKey = findKeyCaseInsensitive(CompanyTypes, company);
+      if (!companyTypeKey) {
+        logger.error(`Unknown company: ${company}`);
+        return;
+      }
 
-    const taskDetails = { user, company: CompanyTypes[companyTypeKey] };
+      const taskKey = { user, company: CompanyTypes[companyTypeKey] };
 
-    // Run scraping on startup if it's configured
-    if (process.env.SYNC_ON_STARTUP === 'true') {
-      handleTransactions(taskDetails, credentials, chatId)
-        .catch((error) => logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack }));
-    }
-
-    // Schedule cron job for this user and company if it's configured
-    if (process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE) {
-      const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
-        try {
-          await handleTransactions(taskDetails, credentials, chatId);
-        } catch (error) {
-          logger.error(`Scraping failed`, { ...taskDetails, errorMessage: error.message, errorStack: error.stack });
-        }
-        logger.info(`Next scheduled run: ${this.nextDate()}`, { taskDetails });
-      }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
-
-      scheduledTask.start();
-      logger.info(`Next scheduled: ${scheduledTask.nextDate()}`, taskDetails);
-    }
+      // Push the flat task object into the array
+      transactionSyncTasks.push({
+        taskKey: taskKey,
+        credentials: credentials,
+        chatId: chatId
+      });
+    });
   });
-});
+
+  return transactionSyncTasks;
+}
+
+/**
+ * Processes the given transaction sync tasks sequentially.
+ */
+async function processTransactionSyncTasks(transactionSyncTasks) {
+  for (const task of transactionSyncTasks) {
+    try {
+      await handleTransactions(task.taskKey, task.credentials, task.chatId);
+    } catch (error) {
+      logger.error(`Sync failed`, { ...task.taskKey, errorMessage: error.message, errorStack: error.stack });
+    }
+  }
+}
