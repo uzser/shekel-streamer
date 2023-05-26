@@ -501,7 +501,7 @@ async function handleTransactions(taskKey, credentials, chatId) {
       updated: 0
     };
 
-    const chunkSize = 30; // to not exceed token limit in OpenAI Chat API while translating
+    const chunkSize = Number(process.env.GPT_TRANSLATION_COUNT) || 30;
     let chunkCount = Math.ceil(transactions.length / chunkSize);
 
     for (let i = 0; i < chunkCount; i++) {
