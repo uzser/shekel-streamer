@@ -1,15 +1,7 @@
-.env.example
-.git
-.gitignore
-.github
-.vscode
-logs
-node_modules
-npm-debug.log
-screenshots
-LICENSE
-VERSION
-README.md
-docker-compose.yml
-Dockerfile
-.dockerignore
+# Ignore everything
+*
+
+# Allow files and directories
+!/package*.json
+!/src
+!/.env
