@@ -21,50 +21,68 @@ const logger = configureLogger();
 
 logger.info('Starting Shekel Streamer...');
 
-const isTrnaslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
+const isTranslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
   && process.env.GPT_TRANSLATION_PROMPT && process.env.GPT_TRANSLATION_PROMPT.includes('<text_to_replace>');
 
-if (!isTrnaslationEnabled) {
+if (!isTranslationEnabled) {
   logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
 }
 
-const transactionSyncTasks = getTransactionSyncTasks();
-if (transactionSyncTasks.length === 0) {
-  logger.info('No transaction sync tasks found. Exiting.');
-  process.exit(0);
-}
-
-const isScheduled = process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE
-
-// Run sync on startup if it's configured
-if (process.env.SYNC_ON_STARTUP === 'true') {
-  processTransactionSyncTasks(transactionSyncTasks)
-    .then(() => {
-      if (!isScheduled) {
-        logger.info('Sync on schedule is disabled. Exiting.');
-        process.exit(0);
-      }
-    });
-}
-
-
-// Schedule cron job for this user and company if it's configured
-if (isScheduled) {
-  const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
-    try {
-      await processTransactionSyncTasks(transactionSyncTasks);
-    } catch (error) {
-      logger.error(`Sync failed`, { errorMessage: error.message, errorStack: error.stack });
+checkMongoDB(process.env.MONGO_CONNECTION_STRING)
+  .then(result => {
+    if (result) {
+      initializeSyncTasks();
+    } else {
+      process.exit(1);
     }
-    logger.info(`Next scheduled sync: ${timezoned(this.nextDate())}`);
-  }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
-
-  scheduledTask.start();
-
-  logger.info(`Next scheduled sync: ${timezoned(scheduledTask.nextDate())}`);
-}
+  });
 
 // End of main code
+
+/**
+ * Initialize and run transaction synchronization tasks.
+ * If SYNC_ON_STARTUP is true, runs tasks on startup.
+ * If SYNC_ON_SCHEDULE is true, schedules tasks according to SYNC_SCHEDULE.
+ * 
+ * @returns {Promise<void>}
+ */
+async function initializeSyncTasks() {
+  const transactionSyncTasks = getTransactionSyncTasks();
+  if (transactionSyncTasks.length === 0) {
+    logger.info('No transaction sync tasks found. Exiting.');
+    process.exit(0);
+  }
+
+  const isScheduled = process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE
+
+  // Run sync on startup if it's configured
+  if (process.env.SYNC_ON_STARTUP === 'true') {
+    await processTransactionSyncTasks(transactionSyncTasks)
+    if (!isScheduled) {
+      logger.info('Sync on schedule is disabled. Exiting.');
+      process.exit(0);
+    }
+  } else if (!isScheduled) {
+    logger.info('Sync on startup and schedule are disabled. Exiting.');
+    process.exit(0);
+  }
+
+  // Schedule cron job for this user and company if it's configured
+  if (isScheduled) {
+    const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
+      try {
+        await processTransactionSyncTasks(transactionSyncTasks);
+      } catch (error) {
+        logger.error(`Sync failed`, { errorMessage: error.message, errorStack: error.stack });
+      }
+      logger.info(`Next scheduled sync: ${timezoned(this.nextDate())}`);
+    }, null, false, DEFAULT_TIMEZONE); // Don't start the job right now
+
+    scheduledTask.start();
+
+    logger.info(`Next scheduled sync: ${timezoned(scheduledTask.nextDate())}`);
+  }
+}
 
 /**
  * Function to get ISO string with timezone set to DEFAULT_TIMEZONE
@@ -167,7 +185,7 @@ Status: ${transaction.status}
 async function translateDescriptions(descriptions) {
   const placeholder = '<text_to_replace>';
 
-  if (!isTrnaslationEnabled) {
+  if (!isTranslationEnabled) {
     return descriptions.map(_ => null);
   }
 
@@ -385,6 +403,28 @@ async function saveOrUpdate(transaction) {
     }
   } finally {
     await client.close();
+  }
+}
+
+/**
+ * Function to check MongoDB availability
+ * 
+ * @param {string} uri MongoDB connection string
+ * @returns {Promise<boolean>} true if MongoDB is available, false otherwise
+ */
+async function checkMongoDB(uri) {
+  let client
+  try {
+    client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    await client.connect();
+    return true;
+  } catch (error) {
+    console.error('Failed to connect to MongoDB.', { errorMessage: error.message, errorStack: error.stack });
+    return false;
+  } finally {
+    if (client) {
+      await client.close();
+    }
   }
 }
 
