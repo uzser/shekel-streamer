@@ -2,7 +2,11 @@
 
 Shekel Streamer is a financial transactions automation service leveraging the Israeli-bank-scrapers library. It scrapes transactions, stores them in a MongoDB database, translates descriptions with OpenAI API, and sends alerts to Telegram channels. With the option to schedule tasks and enhanced logging capabilities for monitoring, the service can be easily deployed using Docker. Robust error handling ensures stability and reliability.
 
-![Screenshot](screenshots/shekel-streamer-example.png?raw=true "Shekel Streamer example")
+![Screenshot](screenshots/shekel-streamer.png?raw=true "Shekel Streamer")
+
+Logs example:
+
+![Logs](screenshots/logs.png?raw=true "Logs")
 
 ## Features
 
