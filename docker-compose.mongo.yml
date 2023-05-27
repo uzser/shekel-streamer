@@ -1,0 +1,40 @@
+version: '3'
+services:
+  shekel-streamer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shekel-streamer-app
+    restart: on-failure
+    environment:
+      - MONGO_CONNECTION_STRING=mongodb://shekelStreamerAdmin:ShEkElStReAmEr@mongo:27017/
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:6.0.6
+    container_name: shekel-streamer-mongo
+    restart: always
+    volumes:
+      - mongodata:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=shekelStreamerAdmin
+      - MONGO_INITDB_ROOT_PASSWORD=ShEkElStReAmEr
+
+  # Database Manager
+  mongo-express:
+    image: mongo-express
+    container_name: shekel-streamer-mongo-express
+    restart: always
+    ports:
+      - 8099:8081
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=shekelStreamerAdmin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=ShEkElStReAmEr
+      - ME_CONFIG_MONGODB_URL=mongodb://shekelStreamerAdmin:ShEkElStReAmEr@mongo:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=ShEkElStReAmEr
+    depends_on:
+      - mongo
+volumes:
+  mongodata:

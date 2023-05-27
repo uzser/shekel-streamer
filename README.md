@@ -42,6 +42,18 @@ docker-compose up -d --build
 
 To access the logs, use the command `docker-compose logs -f`.
 
+### Running the App with Local MongoDB Instance using Docker Compose
+
+You can run the project with its own MongoDB instance and [Mongo Express](https://github.com/mongo-express/mongo-express) for database management using the docker-compose.mongo.yml file.
+
+Run the following command in the project's root directory:
+
+```bash
+docker-compose -f docker-compose.mongo.yml up -d --build
+```
+
+This configuration automatically sets the MongoDB connection string and credentials. You can access the Mongo Express interface at `http://localhost:8099` using `admin:ShEkElStReAmEr` as the login and the password (or the values you set in the docker-compose.mongo.yml file).
+
 ### Running the App using a Published Docker Image
 
 Pull and run the published Docker image using the command:
@@ -50,7 +62,11 @@ Pull and run the published Docker image using the command:
 docker run --env-file .env -d --name shekel-streamer --pull=always uzser/shekel-streamer:latest
 ```
 
-To update to a newer version, stop and remove the old container before running the new one.
+To update to a newer version, stop and remove the old container before running the new one:
+
+```bash
+docker stop shekel-streamer && docker rm shekel-streamer
+```
 
 ### Running for one-time sync
 
