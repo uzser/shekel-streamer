@@ -24,10 +24,10 @@ USER pptruser
 WORKDIR /app
 
 # Install app dependencies
-COPY --chown=pptruser package*.json ./
-RUN npm install
+COPY --chown=pptruser package.json yarn.lock ./
+RUN yarn
 
 # Bundle app source
 COPY . .
 
-CMD [ "npm", "run", "start"]
+CMD [ "yarn", "start"]

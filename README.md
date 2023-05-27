@@ -22,17 +22,17 @@ Logs example:
 
 ## How to Run
 
-You can run Shekel Streamer using different methods: npm, Docker Compose, or using a published Docker image. Here's how to get started:
+You can run Shekel Streamer using different methods: yarn, Docker Compose, or using a published Docker image. Here's how to get started:
 
 ### Preparation
 
 1. Create a copy of the provided `.env.example` file and name it `.env`.
 2. Fill in the necessary values in your `.env` file. See the [Configuration](#configuration) section for more details.
 
-### Running the App using npm
+### Running the App using yarn
 
-1. Install the necessary dependencies by running `npm install`.
-2. Start the application by running `npm run start`.
+1. Install the necessary dependencies by running `yarn`.
+2. Start the application by running `yarn start`.
 
 Logs will be displayed in the console as well as stored in log files for further investigation if required.
 

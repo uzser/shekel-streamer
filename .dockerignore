@@ -2,6 +2,7 @@
 *
 
 # Allow files and directories
-!/package*.json
+!/package.json
+!/yarn.lock
 !/src
 !/.env

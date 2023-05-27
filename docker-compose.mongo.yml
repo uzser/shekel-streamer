@@ -4,6 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: shekel-streamer
     container_name: shekel-streamer-app
     restart: on-failure
     environment:

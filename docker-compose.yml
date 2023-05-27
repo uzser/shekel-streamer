@@ -5,4 +5,5 @@ services:
       context: .
       dockerfile: Dockerfile
     image: shekel-streamer
+    container_name: shekel-streamer
     restart: on-failure
