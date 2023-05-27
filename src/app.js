@@ -12,7 +12,7 @@ import puppeteer from 'puppeteer';
 import winston from 'winston';
 
 
-const DB_NAME = process.env.DB_NAME || 'shekelStreamerDB';
+const DB_NAME = process.env.DB_NAME || 'shekelStreamer';
 const TRANSACTIONS_COLLECTION_NAME = process.env.TRANSACTIONS_COLLECTION_NAME || 'transactions';
 const TRANSLATIONS_COLLECTION_NAME = process.env.TRANSLATIONS_COLLECTION_NAME || 'translations';
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
