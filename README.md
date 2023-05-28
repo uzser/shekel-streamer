@@ -1,6 +1,6 @@
 # Shekel Streamer
 
-Shekel Streamer is a financial transactions automation service leveraging the Israeli-bank-scrapers library. It scrapes transactions, stores them in a MongoDB database, translates descriptions with OpenAI API, and sends alerts to Telegram channels. With the option to schedule tasks and enhanced logging capabilities for monitoring, the service can be easily deployed using Docker. Robust error handling ensures stability and reliability.
+Shekel Streamer, powered by the [Israeli-bank-scrapers library](https://github.com/eshaham/israeli-bank-scrapers), is your personal finance bot. It scrapes transaction data, stores it in MongoDB, translates details with the OpenAI API, and sends updates to your Telegram channel(s). Multiple user setup, scheduled launch, detailed logging, and Docker deployment are available, along with robust error handling for reliability. A smart and dependable tool for your financial needs.
 
 ![Screenshot](screenshots/shekel-streamer.png?raw=true "Shekel Streamer")
 
@@ -13,7 +13,7 @@ Logs example:
 - Automated financial transactions scraping from specified providers.
 - Storing transactions in a MongoDB database.
 - Sending transaction notifications to specified Telegram channels.
-- Customizable schedule for getting new transactions.
+- Customizable schedule for getting new transactions (by cron).
 - Support for multiple users and separate credentials and Telegram channels for each financial provider.
 - Translating transactions descriptions using the OpenAI API, catering to the Israeli context and supporting custom phrase recognition.
 - Deployable using Docker with docker-compose and a published docker image.
@@ -26,10 +26,14 @@ You can run Shekel Streamer using different methods: yarn, Docker Compose, or us
 
 ### Preparation
 
-1. Create a copy of the provided `.env.example` file and name it `.env`.
-2. Fill in the necessary values in your `.env` file. See the [Configuration](#configuration) section for more details.
+1. Clone the repository to your local machine by running `git clone https://github.com/uzser/shekel-streamer`.
+2. Navigate into the cloned repository by running `cd shekel-streamer`.
+3. Create a copy of the provided `.env.example` file and rename it to `.env`.
+4. Fill in the necessary values in your `.env` file. See the [Configuration](#configuration) section for more details.
 
 ### Running the App using yarn
+
+Firstly, ensure that yarn is installed on your machine. If you do not have yarn installed, you can install it using the  command `npm install -g yarn`. With yarn installed, follow these steps to run the app:
 
 1. Install the necessary dependencies by running `yarn`.
 2. Start the application by running `yarn start`.
@@ -60,17 +64,34 @@ This configuration automatically sets the MongoDB connection string and credenti
 
 ### Running the App using a Published Docker Image
 
+You can run the application directly using a published Docker image. This is particularly useful in Kubernetes-based cloud environments or when you prefer not to clone the entire repository.
+
 Pull and run the published Docker image using the command:
 
 ```bash
 docker run --env-file .env -d --name shekel-streamer --pull=always uzser/shekel-streamer:latest
 ```
 
+Alternatively, if you prefer not to use the `.env` file, you can pass all necessary environment variables directly to the `docker run` command:
+
+```bash
+docker run -d \
+-e "VARIABLE1=value1" \
+-e "VARIABLE2=value2"  \
+--name shekel-streamer \
+--pull=always \
+uzser/shekel-streamer:latest
+```
+
+Replace `VARIABLE1=value1` and `VARIABLE2=value2` with the environment variables from the `.env.example` file, filled with the necessary values.
+
 To update to a newer version, stop and remove the old container before running the new one:
 
 ```bash
 docker stop shekel-streamer && docker rm shekel-streamer
 ```
+
+All necessary environment variables are described in the [Configuration](#configuration) section.
 
 ### Running for one-time sync
 
@@ -129,7 +150,6 @@ Here's how you can add a new user for transaction scraping:
 4. For each provider, the user's credentials should match the specifications listed in the [israeli-bank-scrapers documentation](https://github.com/eshaham/israeli-bank-scrapers/blob/master/README.md#specific-definitions-per-scraper).
 
 After these steps, the new user will be configured for transaction scraping, and notifications will be sent to the specified Telegram channel(s). In all the examples above, replace `USERNAME` with the actual username you're configuring.
-
 
 ## About translation using the OpenAI API
 
