@@ -16,16 +16,22 @@ const DB_NAME = process.env.DB_NAME || 'shekelStreamer';
 const TRANSACTIONS_COLLECTION_NAME = process.env.TRANSACTIONS_COLLECTION_NAME || 'transactions';
 const TRANSLATIONS_COLLECTION_NAME = process.env.TRANSLATIONS_COLLECTION_NAME || 'translations';
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
+const SYNC_SCHEDULE = process.env.SYNC_SCHEDULE || '0 8 * * *';
+const SYNC_ON_STARTUP = process.env.SYNC_ON_STARTUP || 'true';
+const SYNC_ON_SCHEDULE = process.env.SYNC_ON_SCHEDULE || 'false';
+
+const GPT_TRANSLATION_PROMPT = process.env.GPT_TRANSLATION_PROMPT || 'You are a translation service.\nUse the list of correct translations of some sentences when translating (format: "original text|translation"):\n\nפועלים-|Hapoalim\nאושר עד|Osher Ad\nמוביט|Moovit\n\nPlease provide the translations for each line of text, plain list without original text.\nHere is an example request:\nמסטרקרד\nמסטרקרד\n\nAnd the corresponding response:\nMastercard\nMastercard\n\nNow, translate into English every following line of text, specifically in the Israeli context:\nמסטרקרד\n<text_to_replace>\nRespond in a one-column TSV format.'
+const GPT_TRANSLATION_PROMPT_PLACEHOLDER = '<text_to_replace>';
 
 const logger = configureLogger();
 
 logger.info('Starting Shekel Streamer...');
 
-const isTranslationEnabled = process.env.OPENAI_API_KEY && process.env.GPT_MODEL_FAST
-  && process.env.GPT_TRANSLATION_PROMPT && process.env.GPT_TRANSLATION_PROMPT.includes('<text_to_replace>');
+const isTranslationEnabled = process.env.OPENAI_API_KEY
+  && GPT_TRANSLATION_PROMPT.includes(GPT_TRANSLATION_PROMPT_PLACEHOLDER);
 
 if (!isTranslationEnabled) {
-  logger.info('No OpenAI API key or GPT model or GPT translation prompt found. Translation is disabled.');
+  logger.info(`No OpenAI API key or GPT translation prompt does not include ${GPT_TRANSLATION_PROMPT_PLACEHOLDER}. Translation is disabled.`);
 }
 
 checkMongoDB(process.env.MONGO_CONNECTION_STRING)
@@ -53,10 +59,10 @@ async function initializeSyncTasks() {
     process.exit(0);
   }
 
-  const isScheduled = process.env.SYNC_ON_SCHEDULE === 'true' && process.env.SYNC_SCHEDULE
+  const isScheduled = SYNC_ON_SCHEDULE === 'true' && SYNC_SCHEDULE
 
   // Run sync on startup if it's configured
-  if (process.env.SYNC_ON_STARTUP === 'true') {
+  if (SYNC_ON_STARTUP === 'true') {
     await processTransactionSyncTasks(transactionSyncTasks)
     if (!isScheduled) {
       logger.info('Sync on schedule is disabled. Exiting.');
@@ -69,7 +75,7 @@ async function initializeSyncTasks() {
 
   // Schedule cron job for this user and company if it's configured
   if (isScheduled) {
-    const scheduledTask = new CronJob(process.env.SYNC_SCHEDULE, async function () {
+    const scheduledTask = new CronJob(SYNC_SCHEDULE, async function () {
       try {
         await processTransactionSyncTasks(transactionSyncTasks);
       } catch (error) {
@@ -183,8 +189,6 @@ Status: ${transaction.status}
  * @returns {Promise<string[]>} Translated descriptions
  */
 async function translateDescriptions(descriptions) {
-  const placeholder = '<text_to_replace>';
-
   if (!isTranslationEnabled) {
     return descriptions.map(_ => null);
   }
@@ -192,7 +196,7 @@ async function translateDescriptions(descriptions) {
   const api = new ChatGPTAPI({
     apiKey: process.env.OPENAI_API_KEY,
     completionParams: {
-      model: process.env.GPT_MODEL_FAST,
+      model: process.env.GPT_MODEL_FAST || 'gpt-3.5-turbo',
       temperature: 0.2 // for stable results
     }
   });
@@ -200,7 +204,7 @@ async function translateDescriptions(descriptions) {
   // Join all descriptions into one string
   const descriptionsString = descriptions.join('\n');
 
-  const request = process.env.GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(placeholder, descriptionsString);
+  const request = GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(GPT_TRANSLATION_PROMPT_PLACEHOLDER, descriptionsString);
   const response = await api.sendMessage(request)
 
   // Note: response can include extra translanslation in the the beginning. Details are below.
@@ -415,7 +419,7 @@ async function saveOrUpdate(transaction) {
 async function checkMongoDB(uri) {
   let client
   try {
-    client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    client = new MongoClient(uri);
     await client.connect();
     return true;
   } catch (error) {
@@ -435,7 +439,7 @@ async function checkMongoDB(uri) {
  */
 async function notify(transaction, chatId) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !chatId) {
-    logger.info('No Telegram bot token or chat ID found. Skipping notification.');
+    logger.info('No Telegram bot token or chat ID found. Skipping notification.', { user: transaction.userCode, company: transaction.companyId});
     return;
   }
 
