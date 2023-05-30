@@ -108,10 +108,11 @@ function configureLogger() {
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.printf(info => {
-          const { timestamp, level, message, ...rest } = info;
-          return `${timestamp} ${level}: ${message}${(Object.keys(rest).length > 0) ? ' ' + JSON.stringify(rest) : ''}`
-        })
+        winston.format.printf(({ timestamp, level, message, ...rest }) =>
+          `${timestamp} ${level}: ${typeof message === 'object'
+            ? JSON.stringify(message)
+            : message}${Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : ''}`
+        )
       )
     })
   ];
@@ -207,13 +208,13 @@ async function translateDescriptions(descriptions) {
   const request = GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(GPT_TRANSLATION_PROMPT_PLACEHOLDER, descriptionsString);
 
   logger.info("Translation request was sent");
-  logger.debug('', { request: request });
+  logger.debug({ request });
 
   const response = await api.sendMessage(request)
 
   // Note: response can include extra translanslation in the the beginning. Details are below.
   logger.info("Translation response was received");
-  logger.debug('', { response: response.text });
+  logger.debug({ response: response.text });
 
   // Split the text into lines and obtain translations from the response in the format:
   // "translate1
@@ -317,7 +318,7 @@ async function getTranslations(transactions) {
     } catch (error) {
       logger.error(`Failed to translate descriptions`,
         { errorMessage: error.message, errorStack: error.stack });
-      logger.debug('', { descriptions: uniqueNotCachedDescrs });
+      logger.debug({ descriptions: uniqueNotCachedDescrs });
     }
   }
 
@@ -586,7 +587,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   } else {
     logger.error(`Sync failed`,
       { taskKey, errorType: syncResult.errorType });
-    logger.debug('', { errorMessage: syncResult.errorMessage })
+    logger.debug({ errorMessage: syncResult.errorMessage })
   }
 }
 
@@ -605,8 +606,6 @@ function findKeyCaseInsensitive(object, targetKey) {
   }
   return null;
 }
-
-
 
 /**
  * Get tasks for sync transactions
