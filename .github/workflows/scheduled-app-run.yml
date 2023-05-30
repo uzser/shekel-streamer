@@ -8,24 +8,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check out code
-      uses: actions/checkout@v3.5.2
-
-    - name: Setup Node.js environment
-      uses: actions/setup-node@v2.5.2
-      with:
-        node-version: '20'
-
-    - name: Install dependencies
-      run: yarn
-
-    - name: Run script
-      run: yarn start
-      env:
-        MONGO_CONNECTION_STRING: ${{ secrets.MONGO_CONNECTION_STRING }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        USERS: USER1
-        USER1_TELEGRAM_CHANNEL_ID: ${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}
-        USER1_HAPOALIM_USER_CODE: ${{ secrets.USER1_HAPOALIM_USER_CODE }}
-        USER1_HAPOALIM_PASSWORD: ${{ secrets.USER1_HAPOALIM_PASSWORD }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    - name: Run Docker container
+      run: >
+        docker run -e MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}
+        -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+        -e USERS=USER1
+        -e USER1_TELEGRAM_CHANNEL_ID=${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}
+        -e USER1_HAPOALIM_USER_CODE=${{ secrets.USER1_HAPOALIM_USER_CODE }}
+        -e USER1_HAPOALIM_PASSWORD=${{ secrets.USER1_HAPOALIM_PASSWORD }}
+        -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        uzser/shekel-streamer:latest
