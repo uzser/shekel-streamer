@@ -10,11 +10,11 @@ jobs:
     steps:
     - name: Run Docker container
       run: >
-        docker run -e MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}
-        -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-        -e USERS=USER1
-        -e USER1_TELEGRAM_CHANNEL_ID=${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}
-        -e USER1_HAPOALIM_USER_CODE=${{ secrets.USER1_HAPOALIM_USER_CODE }}
-        -e USER1_HAPOALIM_PASSWORD=${{ secrets.USER1_HAPOALIM_PASSWORD }}
-        -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        docker run -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
+        -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
+        -e "USERS=USER1"
+        -e "USER1_TELEGRAM_CHANNEL_ID=${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}"
+        -e "USER1_HAPOALIM_USER_CODE=${{ secrets.USER1_HAPOALIM_USER_CODE }}"
+        -e "USER1_HAPOALIM_PASSWORD=${{ secrets.USER1_HAPOALIM_PASSWORD }}"
+        -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
         uzser/shekel-streamer:latest
