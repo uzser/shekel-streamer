@@ -14,9 +14,9 @@ jobs:
       - name: Check if schedule is disabled
         run: |
           # if [[ "${{ github.event_name }}" = "schedule" && "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
-          if "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
+          if [[ "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
             echo "::info::Scheduled runs are currently disabled."
-            exit 1
+            exit 0
           fi
 
       - name: Decode and validate USERS_JSON variable
