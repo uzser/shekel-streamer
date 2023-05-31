@@ -24,6 +24,6 @@ jobs:
           docker run \
           -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}" \
           -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-          -e "USERS_JSON=${{ secrets.USERS_JSON }}" \
+          -e 'USERS_JSON=${{ secrets.USERS_JSON }}' \
           -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
           shekel-streamer
