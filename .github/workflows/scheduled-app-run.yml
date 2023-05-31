@@ -1,6 +1,9 @@
 name: Scheduled App Run
 
 on:
+  schedule:
+    # Runs at 05:00 UTC (08:00 in Israel Time) every day
+    - cron:  '0 5 * * *'
   workflow_dispatch:
 
 jobs:
@@ -8,6 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check if schedule is disabled
+        run: |
+          if [[ "${{ github.event_name }}" = "schedule" && "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
+            echo "::info::Scheduled runs are currently disabled."
+            exit 0
+          fi
+
       - name: Decode and validate USERS_JSON variable
         run: |
           if [ -z "${{ secrets.USERS_JSON_BASE64 }}" ]; then
@@ -23,7 +33,7 @@ jobs:
             exit 1
           fi
 
-          # Mask all values in JSON
+          # Mask all values in JSON to prevent them from being printed in logs
           echo $USERS_JSON | jq -r '.. | strings' | while read value; do
             echo "::add-mask::$value" 
           done
@@ -43,4 +53,7 @@ jobs:
           -e 'TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}' \
           -e 'USERS_JSON=${{ env.USERS_JSON }}' \
           -e 'OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}' \
+          -e 'GPT_TRANSLATION_PROMPT=${{ secrets.GPT_TRANSLATION_PROMPT }}' \
+          -e 'LOG_LEVEL=${{ vars.LOG_LEVEL }}' \
+          -e 'SYNC_DAYS_COUNT=${{ vars.SYNC_DAYS_COUNT }}' \
           shekel-streamer
