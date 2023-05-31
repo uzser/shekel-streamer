@@ -15,8 +15,7 @@ jobs:
       - name: Check if schedule is disabled
         id: check
         run: |
-          # echo "::set-output name=run::${{ github.event_name == 'schedule' && vars.SCHEDULED_RUN_ENABLED != 'true' ? 'false' : 'true' }}"
-          RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' ? 'false' : 'true' }}
+          RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}
           if [ "$RUN" == "false" ]; then
             echo "Scheduled run is disabled, exiting..."
             exit 0
