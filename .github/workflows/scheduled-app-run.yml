@@ -8,13 +8,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Run Docker container
-      run: >
-        docker run -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
-        -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
-        -e "USERS=USER1"
-        -e "USER1_TELEGRAM_CHANNEL_ID=${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}"
-        -e "USER1_HAPOALIM_USER_CODE=${{ secrets.USER1_HAPOALIM_USER_CODE }}"
-        -e "USER1_HAPOALIM_PASSWORD=${{ secrets.USER1_HAPOALIM_PASSWORD }}"
-        -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
-        uzser/shekel-streamer:latest
+      - name: Validate and mask sensitive data in JSON secret
+        run: |
+          if [ -z "${{ secrets.USERS_JSON }}" ]; then
+            echo "USERS_JSON secret is empty. Please provide a valid JSON."
+            exit 1
+          fi
+
+          echo "${{ secrets.USERS_JSON }}" | jq empty
+          if [ $? -eq 0 ]; then
+            echo "${{ secrets.USERS_JSON }}" | jq -r '.. | strings' | while read value; do
+              echo "::add-mask::$value"
+            done
+          else
+            echo "Invalid JSON format in USERS_JSON secret. Check the secret value."
+            exit 1
+          fi
+
+      - name: Run Docker container
+        run: >
+          docker run -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
+          -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          -e "USERS_JSON=${{ secrets.USERS_JSON }}"
+          -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
+          uzser/shekel-streamer:latest

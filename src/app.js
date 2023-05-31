@@ -35,14 +35,21 @@ if (!isTranslationEnabled) {
   logger.info(`No OpenAI API key or GPT translation prompt does not include ${GPT_TRANSLATION_PROMPT_PLACEHOLDER}. Translation is disabled.`);
 }
 
-checkMongoDB(process.env.MONGO_CONNECTION_STRING)
-  .then(result => {
-    if (result) {
-      initializeSyncTasks();
-    } else {
-      process.exit(1);
-    }
-  });
+const testSyncTasks = getTransactionSyncTasks();
+for (const task of testSyncTasks) {
+  logger.info(`Sync task found: ${task.taskKey}`);
+  logger.info(`Sync task: ${JSON.stringify(task.credentials)}`);
+}
+
+
+// checkMongoDB(process.env.MONGO_CONNECTION_STRING)
+//   .then(result => {
+//     if (result) {
+//       initializeSyncTasks();
+//     } else {
+//       process.exit(1);
+//     }
+//   });
 
 // End of main code
 
