@@ -17,12 +17,12 @@ jobs:
             echo "::error::USERS_JSON_BASE64 secret is empty. Please provide a valid base64-encoded JSON."
             exit 1
           fi
-          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d)
-          if ! echo "$USERS_JSON" | jq empty; then
+          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d | jq -c .)
+          if [ $? -ne 0 ]; then
             echo "::error::Failed to parse USERS_JSON. Please ensure it is valid JSON."
             exit 1
           fi
-          echo "USERS_JSON='$USERS_JSON'" >> $GITHUB_ENV
+          echo "USERS_JSON=$USERS_JSON" >> $GITHUB_ENV
 
       - name: Build and run Docker container
         run: |
