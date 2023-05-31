@@ -12,13 +12,18 @@ jobs:
         run: |
           if [ -z "${{ secrets.USERS_JSON }}" ]; then
             echo "::error::USERS_JSON secret is empty. Please provide a valid JSON."
-          exit 1
+            exit 1
           fi
+
+      - name: Build Docker image
+        run: |
+          docker build -t shekel-streamer .
 
       - name: Run Docker container
         run: >
-          docker run -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
+          docker run 
+          -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
           -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
           -e "USERS_JSON=${{ secrets.USERS_JSON }}"
           -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
-          uzser/shekel-streamer:latest
+          shekel-streamer
