@@ -22,6 +22,9 @@ jobs:
             echo "::error::Failed to parse USERS_JSON. Please ensure it is valid JSON."
             exit 1
           fi
+          echo $USERS_JSON | jq -r '.. | strings' | while read value; do
+            echo "::add-mask::$value"
+          done
           echo "USERS_JSON=$USERS_JSON" >> $GITHUB_ENV
 
       - name: Build and run Docker container
