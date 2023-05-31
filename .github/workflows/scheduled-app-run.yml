@@ -8,9 +8,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3.5.2
-
       - name: Decode and validate USERS_JSON variable
         run: |
           if [ -z "${{ secrets.USERS_JSON_BASE64 }}" ]; then
@@ -22,15 +19,21 @@ jobs:
 
           # Validate JSON. If invalid, execute commands in 'if' block, discarding any output or error message.
           if ! echo "$USERS_JSON" | jq empty > /dev/null 2>&1; then
-            echo "::error::Failed to parse USERS_JSON. Please ensure it is valid JSON."
+            echo "::error::Failed to parse USERS_JSON_BASE64. Please ensure it is valid JSON."
             exit 1
           fi
 
-          USERS_JSON=$(echo "$USERS_JSON" | jq -c .) # Compact JSON to single line
+          # Mask all values in JSON
           echo $USERS_JSON | jq -r '.. | strings' | while read value; do
-            echo "::add-mask::$value"
+            echo "::add-mask::$value" 
           done
+
+          # Compact JSON to single line and set as env var for use in Docker container
+          USERS_JSON=$(echo "$USERS_JSON" | jq -c .)
           echo "USERS_JSON=$USERS_JSON" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v3.5.2
 
       - name: Build and run Docker container
         run: |
