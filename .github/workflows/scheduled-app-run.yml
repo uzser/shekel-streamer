@@ -15,12 +15,7 @@ jobs:
       - name: Check if schedule is disabled
         id: check
         run: |
-          RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}
-          if [ "$RUN" == "false" ]; then
-            echo "Scheduled run is disabled, exiting..."
-            exit 0
-          fi
-          echo "::set-output name=run::$RUN"
+          echo "::set-output name=run::${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}"
 
   run_app:
     needs: check-schedule-status
