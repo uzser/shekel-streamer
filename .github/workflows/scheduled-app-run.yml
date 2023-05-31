@@ -11,8 +11,8 @@ jobs:
       - name: Validate and mask sensitive data in JSON secret
         run: |
           if [ -z "${{ secrets.USERS_JSON }}" ]; then
-            echo "USERS_JSON secret is empty. Please provide a valid JSON."
-            exit 1
+            echo "::error::USERS_JSON secret is empty. Please provide a valid JSON."
+          exit 1
           fi
 
           echo "${{ secrets.USERS_JSON }}" | jq empty
@@ -21,7 +21,7 @@ jobs:
               echo "::add-mask::$value"
             done
           else
-            echo "Invalid JSON format in USERS_JSON secret. Check the secret value."
+            echo "::error::Invalid JSON format in USERS_JSON secret. Check the secret value."
             exit 1
           fi
 
