@@ -15,7 +15,7 @@ jobs:
       - name: Check if schedule is disabled
         id: check
         run: |
-          RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}
+          RUN=${{ github.event_name == 'schedule' && vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}
           [ "$RUN" == 'false' ] && echo "Schedule is disabled. To enable, set SCHEDULED_RUN_ENABLED to 'true' in the repository variables."
           echo "RUN=$RUN" >> $GITHUB_OUTPUT
 
