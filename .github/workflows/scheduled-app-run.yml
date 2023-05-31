@@ -15,15 +15,15 @@ jobs:
           exit 1
           fi
 
-          echo "${{ secrets.USERS_JSON }}" | jq empty
-          if [ $? -eq 0 ]; then
-            echo "${{ secrets.USERS_JSON }}" | jq -r '.. | strings' | while read value; do
-              echo "::add-mask::$value"
-            done
-          else
-            echo "::error::Invalid JSON format in USERS_JSON secret. Check the secret value."
-            exit 1
-          fi
+          # echo "${{ secrets.USERS_JSON }}" | jq empty
+          # if [ $? -eq 0 ]; then
+          #   echo "${{ secrets.USERS_JSON }}" | jq -r '.. | strings' | while read value; do
+          #     echo "::add-mask::$value"
+          #   done
+          # else
+          #   echo "::error::Invalid JSON format in USERS_JSON secret. Check the secret value."
+          #   exit 1
+          # fi
 
       - name: Run Docker container
         run: >
