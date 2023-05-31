@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
+import { createScraper, CompanyTypes, SCRAPERS } from 'israeli-bank-scrapers';
 import { MongoClient } from 'mongodb';
 import TelegramBot from 'node-telegram-bot-api';
 import { CronJob } from 'cron';
@@ -207,7 +207,7 @@ async function translateDescriptions(descriptions) {
 
   const request = GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(GPT_TRANSLATION_PROMPT_PLACEHOLDER, descriptionsString);
 
-  logger.info("Translation request was sent");
+  logger.info("Translation request was sent, count of phrases: " + descriptions.length);
   logger.debug({ request });
 
   const response = await api.sendMessage(request)
@@ -223,8 +223,8 @@ async function translateDescriptions(descriptions) {
   // This is why the first line is ignored (traslations.slice(1)).
   // This is done to form a list of phrases that can be more clearly understood by the GPT when there is only one phrase.
   let traslations = response.text.split('\n').map(translation => translation.trim());
-  if (traslations.length !== descriptions.length + 1) {
-    const errorMessage = `The number of translations (${traslations.length}) does not match the number of descriptions (${descriptions.length})`;
+  if (traslations.length - 1 !== descriptions.length) {
+    const errorMessage = `The number of translations (${traslations.length - 1}) does not match the number of descriptions (${descriptions.length})`;
     logger.warn(errorMessage);
     throw new Error(errorMessage);
   }
@@ -608,10 +608,10 @@ function findKeyCaseInsensitive(object, targetKey) {
 }
 
 /**
- * Get tasks for sync transactions
- * @returns {Array} Array of tasks to be executed
+ * Returns transaction synchronization tasks based on environment variables starting with specific user prefix.
+ * @returns {Array} Array of tasks to be executed.
  */
-function getTransactionSyncTasks() {
+function getTransactionSyncTasksFromEnvVars() {
   const transactionSyncTasks = [];
 
   const users = process.env.USERS.split(',');
@@ -658,6 +658,90 @@ function getTransactionSyncTasks() {
   });
 
   return transactionSyncTasks;
+}
+
+/**
+ * Returns transaction synchronization tasks based on JSON stored in `USERS_JSON` environment variable.
+ * @returns {Array} Array of tasks to be executed.
+ */
+function getTransactionSyncTasksFromJSON() {
+  const transactionSyncTasks = [];
+
+  let credentialsData;
+  try {
+    credentialsData = JSON.parse(process.env.USERS_JSON);
+  } catch (e) {
+    logger.error('Failed to parse USERS_JSON. Please ensure it is valid JSON.');
+    return transactionSyncTasks;
+  }
+
+  if (!Array.isArray(credentialsData)) {
+    logger.error('USERS_JSON should be an array of user credentials.');
+    return transactionSyncTasks;
+  }
+
+  credentialsData.forEach((user, userIndex) => {
+    const { userName, telegramChannelId, companies } = user;
+
+    if (!userName || !Array.isArray(companies)) {
+      logger.error(`Invalid user entry. Expected "userName", and "companies" properties. Check user #${userIndex} (index starts from 0).`);
+      return;
+    }
+
+    if (!telegramChannelId) {
+      logger.warn(`No telegramChannelId specified for user #${userIndex} (index starts from 0). Notifications will not be sent.`);
+    }
+
+    companies.forEach((company, companyIndex) => {
+      const { companyName, telegramChannelId: companyTelegramChannelId, ...credentials } = company; //
+      const chatId = companyTelegramChannelId || telegramChannelId;
+
+      // Get CompanyTypes key from config company name
+      const companyTypeKey = findKeyCaseInsensitive(CompanyTypes, companyName);
+      if (!companyTypeKey) {
+        logger.error(`Unknown company. Check user #${userIndex}, company #${companyIndex} (index starts from 0)`);
+        return;
+      }
+
+      const scraper = SCRAPERS[companyTypeKey];
+      if (!scraper) {
+        logger.error(`No scraper found for company. Check user #${userIndex}, company #${companyIndex} (index starts from 0)`);
+        return;
+      }
+
+      const missingFields = scraper.loginFields.filter(field => !credentials.hasOwnProperty(field));
+      if (missingFields.length > 0) {
+        logger.error(`Missing required fields for company. Check user #${userIndex}, company #${companyIndex} (index starts from 0): Missing fields: ${missingFields.join(', ')}`);
+        return;
+      }
+
+      const companyId = CompanyTypes[companyTypeKey];
+      const taskKey = `user_${userIndex}_company_${companyIndex}`;
+
+      // Push the flat task object into the array
+      transactionSyncTasks.push({
+        taskKey,
+        user: userName,
+        companyId,
+        credentials,
+        chatId
+      });
+    });
+  });
+
+  return transactionSyncTasks;
+}
+
+/**
+ * Returns transaction synchronization tasks.
+ * @returns {Array} Array of tasks to be executed.
+ */
+function getTransactionSyncTasks() {
+  if (process.env.USERS_JSON) {
+    return getTransactionSyncTasksFromJSON();
+  } else {
+    return getTransactionSyncTasksFromEnvVars();
+  }
 }
 
 /**
