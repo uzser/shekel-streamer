@@ -8,22 +8,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Validate and mask sensitive data in JSON secret
-        run: |
-          if [ -z "${{ secrets.USERS_JSON }}" ]; then
-            echo "::error::USERS_JSON secret is empty. Please provide a valid JSON."
-            exit 1
-          fi
-
       - name: Checkout code
         uses: actions/checkout@v3.5.2
+
+      - name: Decode and validate USERS_JSON
+        run: |
+          if [ -z "${{ secrets.USERS_JSON_BASE64 }}" ]; then
+            echo "::error::USERS_JSON_BASE64 secret is empty. Please provide a valid base64-encoded JSON."
+            exit 1
+          fi
+          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d)
+          if ! echo "$USERS_JSON" | jq empty; then
+            echo "::error::Failed to parse USERS_JSON. Please ensure it is valid JSON."
+            exit 1
+          fi
+          echo "USERS_JSON=$USERS_JSON" >> $GITHUB_ENV
 
       - name: Build and run Docker container
         run: |
           docker build -t shekel-streamer .
           docker run \
-          -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}" \
-          -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-          -e 'USERS_JSON=${{ secrets.USERS_JSON }}' \
-          -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+          -e 'MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}' \
+          -e 'TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}' \
+          -e 'USERS_JSON=${{ env.USERS_JSON }}' \
+          -e 'OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}' \
           shekel-streamer
