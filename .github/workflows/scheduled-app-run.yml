@@ -7,13 +7,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-script:
+  run_app:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check if schedule is disabled
         run: |
-          if [[ "${{ github.event_name }}" = "schedule" && "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
+          # if [[ "${{ github.event_name }}" = "schedule" && "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
+          if "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
             echo "::info::Scheduled runs are currently disabled."
             exit 0
           fi
