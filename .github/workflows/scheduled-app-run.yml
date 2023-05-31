@@ -15,15 +15,15 @@ jobs:
             exit 1
           fi
 
-      - name: Build Docker image
+      - name: Checkout code
+        uses: actions/checkout@v3.5.2
+
+      - name: Build and run Docker container
         run: |
           docker build -t shekel-streamer .
-
-      - name: Run Docker container
-        run: >
-          docker run 
-          -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}"
-          -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          -e "USERS_JSON=${{ secrets.USERS_JSON }}"
-          -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
+          docker run \
+          -e "MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}" \
+          -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+          -e "USERS_JSON=${{ secrets.USERS_JSON }}" \
+          -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
           shekel-streamer
