@@ -12,17 +12,21 @@ jobs:
         uses: actions/checkout@v3.5.2
 
       - name: Decode and validate USERS_JSON variable
-        continue-on-error: true
         run: |
           if [ -z "${{ secrets.USERS_JSON_BASE64 }}" ]; then
             echo "::error::USERS_JSON_BASE64 secret is empty. Please provide a valid base64-encoded JSON."
             exit 1
           fi
-          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d | jq -c .)
-          if [ $? -ne 0 ]; then
+
+          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d)
+
+          # Validate JSON. If invalid, execute commands in 'if' block, discarding any output or error message.
+          if ! echo "$USERS_JSON" | jq empty > /dev/null 2>&1; then
             echo "::error::Failed to parse USERS_JSON. Please ensure it is valid JSON."
             exit 1
           fi
+
+          USERS_JSON=$(echo "$USERS_JSON" | jq -c .) # Compact JSON to single line
           echo $USERS_JSON | jq -r '.. | strings' | while read value; do
             echo "::add-mask::$value"
           done
