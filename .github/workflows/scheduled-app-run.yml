@@ -7,7 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  check-schedule-status:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - name: Check if schedule is disabled
+        id: check
+        run: |
+          # echo "::set-output name=run::${{ github.event_name == 'schedule' && vars.SCHEDULED_RUN_ENABLED != 'true' ? 'false' : 'true' }}"
+          RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' ? 'false' : 'true' }}
+          if [ "$RUN" == "false" ]; then
+            echo "Scheduled run is disabled, exiting..."
+            exit 0
+          fi
+          echo "::set-output name=run::$RUN"
+
   run_app:
+    needs: check-schedule-status
+    if: needs.check-schedule-status.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:
