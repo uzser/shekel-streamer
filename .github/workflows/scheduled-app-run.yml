@@ -15,7 +15,7 @@ jobs:
       - name: Check if schedule is disabled
         id: check
         run: |
-          echo "::set-output name=run::${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}"
+          echo "RUN=${{ vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}" >> $GITHUB_OUTPUT
 
   run_app:
     needs: check-schedule-status
@@ -23,13 +23,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check if schedule is disabled
-        run: |
-          # if [[ "${{ github.event_name }}" = "schedule" && "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
-          if [[ "${{ vars.SCHEDULED_RUN_ENABLED }}" != "true" ]]; then
-            echo "::info::Scheduled runs are currently disabled."
-            exit 0
-          fi
 
       - name: Decode and validate USERS_JSON variable
         run: |
