@@ -84,7 +84,7 @@ Each company object represents a company related to the user and contains differ
 
 The structure of this JSON configuration is flexible. You can add more users or companies as needed. Each user can have multiple companies, and each company can have different credentials.
 
-To remove unnecessary elements, simply remove the corresponding user or company object from the JSON. Be careful when removing elements to maintain the correct JSON structure. Always check your JSON for errors after making changes. There are many free online tools available that can help you validate your JSON. According to personal observations, [this tool](https://jsonformatter.curiousconcept.com/) is recommended.
+To remove unnecessary elements, simply remove the corresponding user or company object from the JSON. Be careful when removing elements to maintain the correct JSON structure. Always check your JSON for errors after making changes. There are many free online tools available that can help you validate your JSON. According to personal observations, [this tool](https://jsonlint.com/) is recommended - it does not send any data to the server and does not save your JSON.
 
 ❗️ Keep your JSON configuration file safe or delete it after converting it to Base64. Anyone with access to your JSON configuration file can access your bank accounts.
 
