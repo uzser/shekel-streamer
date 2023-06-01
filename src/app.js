@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
+import { createScraper, CompanyTypes, SCRAPERS } from 'israeli-bank-scrapers';
 import { MongoClient } from 'mongodb';
 import TelegramBot from 'node-telegram-bot-api';
 import { CronJob } from 'cron';
@@ -19,6 +19,7 @@ const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Jerusalem';
 const SYNC_SCHEDULE = process.env.SYNC_SCHEDULE || '0 8 * * *';
 const SYNC_ON_STARTUP = process.env.SYNC_ON_STARTUP || 'true';
 const SYNC_ON_SCHEDULE = process.env.SYNC_ON_SCHEDULE || 'false';
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 const GPT_TRANSLATION_PROMPT = process.env.GPT_TRANSLATION_PROMPT || 'You are a translation service.\nUse the list of correct translations of some sentences when translating (format: "original text|translation"):\n\nפועלים-|Hapoalim\nאושר עד|Osher Ad\nמוביט|Moovit\n\nPlease provide the translations for each line of text, plain list without original text.\nHere is an example request:\nמסטרקרד\nמסטרקרד\n\nAnd the corresponding response:\nMastercard\nMastercard\n\nNow, translate into English every following line of text, specifically in the Israeli context:\nמסטרקרד\n<text_to_replace>\nRespond in a one-column TSV format.'
 const GPT_TRANSLATION_PROMPT_PLACEHOLDER = '<text_to_replace>';
@@ -107,10 +108,11 @@ function configureLogger() {
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.printf(info => {
-          const { timestamp, level, message, ...rest } = info;
-          return `${timestamp} ${level}: ${message}${(Object.keys(rest).length > 0) ? ' ' + JSON.stringify(rest) : ''}`
-        })
+        winston.format.printf(({ timestamp, level, message, ...rest }) =>
+          `${timestamp} ${level}: ${typeof message === 'object'
+            ? JSON.stringify(message)
+            : message}${Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : ''}`
+        )
       )
     })
   ];
@@ -125,7 +127,7 @@ function configureLogger() {
   }
 
   return winston.createLogger({
-    level: 'info',
+    level: LOG_LEVEL,
     format: winston.format.combine(
       winston.format.timestamp({
         format: () => timezoned(DateTime.local())
@@ -177,8 +179,7 @@ Amount: *${chargedAmount}*
 Description: *${description}*${transaction.translatedDescription ? `\nDescription (EN): *${transaction.translatedDescription}*` : ''}
 Date: *${date}*${transaction.identifier ? `\nId: *${transaction.identifier}*` : ''}
 
-Processed Date: ${processedDate}
-Type: ${transaction.type}
+Processed Date: ${processedDate}${transaction.type != 'normal' ? `\nType: *${transaction.type}*` : ''}
 Status: ${transaction.status}
 `;
 }
@@ -205,10 +206,15 @@ async function translateDescriptions(descriptions) {
   const descriptionsString = descriptions.join('\n');
 
   const request = GPT_TRANSLATION_PROMPT.replace(/\\n/g, '\n').replace(GPT_TRANSLATION_PROMPT_PLACEHOLDER, descriptionsString);
+
+  logger.info("Translation request was sent, count of phrases: " + descriptions.length);
+  logger.debug({ request });
+
   const response = await api.sendMessage(request)
 
   // Note: response can include extra translanslation in the the beginning. Details are below.
-  logger.info("Translation result was received", { request: descriptionsString, response: response.text });
+  logger.info("Translation response was received");
+  logger.debug({ response: response.text });
 
   // Split the text into lines and obtain translations from the response in the format:
   // "translate1
@@ -217,9 +223,9 @@ async function translateDescriptions(descriptions) {
   // This is why the first line is ignored (traslations.slice(1)).
   // This is done to form a list of phrases that can be more clearly understood by the GPT when there is only one phrase.
   let traslations = response.text.split('\n').map(translation => translation.trim());
-  if (traslations.length !== descriptions.length + 1) {
-    const errorMessage = `Number of translations (${traslations.length}) does not match number of descriptions (${descriptions.length})`;
-    logger.warn(errorMessage, { descriptions, traslations });
+  if (traslations.length - 1 !== descriptions.length) {
+    const errorMessage = `The number of translations (${traslations.length - 1}) does not match the number of descriptions (${descriptions.length})`;
+    logger.warn(errorMessage);
     throw new Error(errorMessage);
   }
 
@@ -311,7 +317,8 @@ async function getTranslations(transactions) {
       }
     } catch (error) {
       logger.error(`Failed to translate descriptions`,
-        { descriptions: uniqueNotCachedDescrs, errorMessage: error.message, errorStack: error.stack });
+        { errorMessage: error.message, errorStack: error.stack });
+      logger.debug({ descriptions: uniqueNotCachedDescrs });
     }
   }
 
@@ -437,9 +444,9 @@ async function checkMongoDB(uri) {
  * @param {any} transaction
  * @param {string} chatId Telegram chat ID
  */
-async function notify(transaction, chatId) {
+async function notify(transaction, chatId, taskKey) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !chatId) {
-    logger.info('No Telegram bot token or chat ID found. Skipping notification.', { user: transaction.userCode, company: transaction.companyId});
+    logger.info('No Telegram bot token or chat ID found. Skipping notification.', { taskKey: taskKey });
     return;
   }
 
@@ -456,25 +463,27 @@ async function notify(transaction, chatId) {
   } catch (error) {
     // If the request still fails after all retries, log the error
     logger.error(`Failed to send message to Telegram`,
-      { transactionDbId: transaction._id, chatId, errorMessage: error.message, errorStack: error.stack });
+      { transactionDbId: transaction._id, errorMessage: error.message, errorStack: error.stack });
   }
 }
 
 /**
  * Function to sync bank transactions, store to MongoDB and send to Telegram chat
- * @param {any} taskKey { user: string, company: CompanyTypes }
+ * @param {string} taskKey Task key for logging
+ * @param {string} user User code
+ * @param {CompanyTypes} companyId Company ID
  * @param {any} credentials Credentials for the financial service
  * @param {string} chatId Telegram chat ID
  */
-async function handleTransactions(taskKey, credentials, chatId) {
+async function handleTransactions(taskKey, user, companyId, credentials, chatId) {
 
   const daysCount = Number(process.env.SYNC_DAYS_COUNT) || 7;
   const initialSyncDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
-  logger.info(`Sync started...`, { ...taskKey, initialSyncDate: DateTime.fromJSDate(initialSyncDate).toISODate() });
+  logger.info(`Sync started...`, { taskKey, initialSyncDate: DateTime.fromJSDate(initialSyncDate).toISODate() });
 
   let scraperOptions = {
-    companyId: taskKey.company,
+    companyId: companyId,
     startDate: initialSyncDate,
     combineInstallments: false,
     timeout: 0, // no timeout
@@ -506,26 +515,27 @@ async function handleTransactions(taskKey, credentials, chatId) {
           translatedDescription: null, // will be filled later
           memo: txn.memo, // can be null
           originalAmount: txn.originalAmount,
-          originalCurrency: txn.originalCurrency, // possible wrong value: ILS instead of USD
+          originalCurrency: txn.originalCurrency, // can be null, possible wrong value: ILS instead of USD
           chargedAmount: txn.chargedAmount, // possible the same as originalAmount, even if originalCurrency is USD/EUR
-          type: txn.type,
-          status: txn.status,
+          type: txn.type, // normal | installments
+          status: txn.status, // completed | pending
           identifier: txn.identifier, // can be null
           processedDate: new Date(txn.processedDate),
           installments: txn.installments, // can be null
-          companyId: taskKey.company,
-          userCode: taskKey.user,
+          category: txn.category, // can be null
+          companyId: companyId,
+          userCode: user,
           chatId: chatId
         });
       });
     });
 
     if (transactions.length === 0) {
-      logger.info(`No transactions found.`, taskKey);
+      logger.info(`No transactions found.`, { taskKey });
       return;
     }
 
-    logger.info(`Total transactions found: ${transactions.length}`, taskKey);
+    logger.info(`Total transactions found: ${transactions.length}`, { taskKey });
 
     // Sort transactions by date from oldest to newest
     transactions.sort((a, b) => a.date - b.date)
@@ -566,17 +576,18 @@ async function handleTransactions(taskKey, credentials, chatId) {
         // Send notification only if transaction is new
         if (isNewTransaction) {
           counters.new++;
-          await notify(transaction, chatId);
+          await notify(transaction, chatId, taskKey);
         } else {
           counters.updated++;
         }
       }
     }
 
-    logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`, taskKey);
+    logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`, { taskKey });
   } else {
     logger.error(`Sync failed`,
-      { ...taskKey, errorType: syncResult.errorType, errorMessage: syncResult.errorMessage });
+      { taskKey, errorType: syncResult.errorType });
+    logger.debug({ errorMessage: syncResult.errorMessage })
   }
 }
 
@@ -597,10 +608,10 @@ function findKeyCaseInsensitive(object, targetKey) {
 }
 
 /**
- * Get tasks for sync transactions
- * @returns {Array} Array of tasks to be executed
+ * Returns transaction synchronization tasks based on environment variables starting with specific user prefix.
+ * @returns {Array} Array of tasks to be executed.
  */
-function getTransactionSyncTasks() {
+function getTransactionSyncTasksFromEnvVars() {
   const transactionSyncTasks = [];
 
   const users = process.env.USERS.split(',');
@@ -632,14 +643,16 @@ function getTransactionSyncTasks() {
         logger.error(`Unknown company: ${company}`);
         return;
       }
-
-      const taskKey = { user, company: CompanyTypes[companyTypeKey] };
+      const companyId = CompanyTypes[companyTypeKey];
+      const taskKey = user + '_' + companyId;
 
       // Push the flat task object into the array
       transactionSyncTasks.push({
-        taskKey: taskKey,
-        credentials: credentials,
-        chatId: chatId
+        taskKey,
+        user,
+        companyId,
+        credentials,
+        chatId
       });
     });
   });
@@ -648,14 +661,98 @@ function getTransactionSyncTasks() {
 }
 
 /**
+ * Returns transaction synchronization tasks based on JSON stored in `USERS_JSON` environment variable.
+ * @returns {Array} Array of tasks to be executed.
+ */
+function getTransactionSyncTasksFromJSON() {
+  const transactionSyncTasks = [];
+
+  let credentialsData;
+  try {
+    credentialsData = JSON.parse(process.env.USERS_JSON);
+  } catch (e) {
+    logger.error('Failed to parse USERS_JSON. Please ensure it is valid JSON.');
+    return transactionSyncTasks;
+  }
+
+  if (!Array.isArray(credentialsData)) {
+    logger.error('USERS_JSON should be an array of user credentials.');
+    return transactionSyncTasks;
+  }
+
+  credentialsData.forEach((user, userIndex) => {
+    const { userName, telegramChannelId, companies } = user;
+
+    if (!userName || !Array.isArray(companies)) {
+      logger.error(`Invalid user entry. Expected "userName", and "companies" properties. Check user #${userIndex} (index starts from 0).`);
+      return;
+    }
+
+    if (!telegramChannelId) {
+      logger.warn(`No telegramChannelId specified for user #${userIndex} (index starts from 0). Notifications will not be sent.`);
+    }
+
+    companies.forEach((company, companyIndex) => {
+      const { companyName, telegramChannelId: companyTelegramChannelId, ...credentials } = company; //
+      const chatId = companyTelegramChannelId || telegramChannelId;
+
+      // Get CompanyTypes key from config company name
+      const companyTypeKey = findKeyCaseInsensitive(CompanyTypes, companyName);
+      if (!companyTypeKey) {
+        logger.error(`Unknown company. Check user #${userIndex}, company #${companyIndex} (index starts from 0)`);
+        return;
+      }
+
+      const scraper = SCRAPERS[companyTypeKey];
+      if (!scraper) {
+        logger.error(`No scraper found for company. Check user #${userIndex}, company #${companyIndex} (index starts from 0)`);
+        return;
+      }
+
+      const missingFields = scraper.loginFields.filter(field => !credentials.hasOwnProperty(field));
+      if (missingFields.length > 0) {
+        logger.error(`Missing required fields for company. Check user #${userIndex}, company #${companyIndex} (index starts from 0): Missing fields: ${missingFields.join(', ')}`);
+        return;
+      }
+
+      const companyId = CompanyTypes[companyTypeKey];
+      const taskKey = `user_${userIndex}_company_${companyIndex}`;
+
+      // Push the flat task object into the array
+      transactionSyncTasks.push({
+        taskKey,
+        user: userName,
+        companyId,
+        credentials,
+        chatId
+      });
+    });
+  });
+
+  return transactionSyncTasks;
+}
+
+/**
+ * Returns transaction synchronization tasks.
+ * @returns {Array} Array of tasks to be executed.
+ */
+function getTransactionSyncTasks() {
+  if (process.env.USERS_JSON) {
+    return getTransactionSyncTasksFromJSON();
+  } else {
+    return getTransactionSyncTasksFromEnvVars();
+  }
+}
+
+/**
  * Processes the given transaction sync tasks sequentially.
  */
 async function processTransactionSyncTasks(transactionSyncTasks) {
   for (const task of transactionSyncTasks) {
     try {
-      await handleTransactions(task.taskKey, task.credentials, task.chatId);
+      await handleTransactions(task.taskKey, task.user, task.companyId, task.credentials, task.chatId);
     } catch (error) {
-      logger.error(`Sync failed`, { ...task.taskKey, errorMessage: error.message, errorStack: error.stack });
+      logger.error(`Sync failed`, { taskKey: task.taskKey, errorMessage: error.message, errorStack: error.stack });
     }
   }
 }

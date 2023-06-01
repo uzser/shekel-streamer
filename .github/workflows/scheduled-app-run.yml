@@ -1,31 +1,67 @@
 name: Scheduled App Run
 
 on:
+  schedule:
+    # Runs at 05:00 UTC (08:00 in Israel Time) every day
+    - cron:  '0 5 * * *'
   workflow_dispatch:
 
 jobs:
-  run-script:
+  check-schedule-status:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - name: Check if schedule is disabled
+        id: check
+        run: |
+          RUN=${{ github.event_name == 'schedule' && vars.SCHEDULED_RUN_ENABLED != 'true' && 'false' || 'true' }}
+          [ "$RUN" == 'false' ] && echo "Schedule is disabled. To enable, set SCHEDULED_RUN_ENABLED to 'true' in the repository variables."
+          echo "RUN=$RUN" >> $GITHUB_OUTPUT
+
+  run_app:
+    needs: check-schedule-status
+    if: needs.check-schedule-status.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check out code
-      uses: actions/checkout@v3.5.2
 
-    - name: Setup Node.js environment
-      uses: actions/setup-node@v2.5.2
-      with:
-        node-version: '20'
+      - name: Decode and validate USERS_JSON variable
+        run: |
+          if [ -z "${{ secrets.USERS_JSON_BASE64 }}" ]; then
+            echo "::error::USERS_JSON_BASE64 secret is empty. Please provide a valid base64-encoded JSON."
+            exit 1
+          fi
 
-    - name: Install dependencies
-      run: yarn
+          USERS_JSON=$(echo "${{ secrets.USERS_JSON_BASE64 }}" | base64 -d)
 
-    - name: Run script
-      run: yarn start
-      env:
-        MONGO_CONNECTION_STRING: ${{ secrets.MONGO_CONNECTION_STRING }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        USERS: USER1
-        USER1_TELEGRAM_CHANNEL_ID: ${{ secrets.USER1_TELEGRAM_CHANNEL_ID }}
-        USER1_HAPOALIM_USER_CODE: ${{ secrets.USER1_HAPOALIM_USER_CODE }}
-        USER1_HAPOALIM_PASSWORD: ${{ secrets.USER1_HAPOALIM_PASSWORD }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Validate JSON. If invalid, execute commands in 'if' block, discarding any output or error message.
+          if ! echo "$USERS_JSON" | jq empty > /dev/null 2>&1; then
+            echo "::error::Failed to parse USERS_JSON_BASE64. Please ensure it is valid JSON."
+            exit 1
+          fi
+
+          # Mask all values in JSON to prevent them from being printed in logs
+          echo $USERS_JSON | jq -r '.. | strings' | while read value; do
+            echo "::add-mask::$value" 
+          done
+
+          # Compact JSON to single line and set as env var for use in Docker container
+          USERS_JSON=$(echo "$USERS_JSON" | jq -c .)
+          echo "USERS_JSON=$USERS_JSON" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v3.5.2
+
+      - name: Build and run Docker container
+        run: |
+          docker build -t shekel-streamer .
+          docker run \
+          -e 'MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }}' \
+          -e 'TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}' \
+          -e 'USERS_JSON=${{ env.USERS_JSON }}' \
+          -e 'OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}' \
+          -e 'GPT_TRANSLATION_PROMPT=${{ secrets.GPT_TRANSLATION_PROMPT }}' \
+          -e 'LOG_LEVEL=${{ vars.LOG_LEVEL }}' \
+          -e 'SYNC_DAYS_COUNT=${{ vars.SYNC_DAYS_COUNT }}' \
+          shekel-streamer
