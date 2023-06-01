@@ -19,10 +19,21 @@ Logs example:
 - Deployable using Docker with docker-compose and a published docker image.
 - Detailed logging for monitoring and debugging purposes.
 - Enhanced error handling to ensure service stability.
+- Can be run on GitHub without the need for installing and supporting your own server.
 
 ## How to Run
 
-You can run Shekel Streamer using different methods: yarn, Docker Compose, or using a published Docker image. Here's how to get started:
+You can run Shekel Streamer using different methods: yarn, Docker Compose, using a published Docker image, or directly on GitHub without the need for your own server.
+
+### Running the App on GitHub
+
+Shekel Streamer can be run directly on GitHub via GitHub Actions without the need for your own server. This requires some additional setup steps, which are detailed in the [GitHub Execution Guide](./docs/github_execution_guide.md).
+
+Once you've completed the setup steps in that guide, the application will run automatically according to the schedule you set. This makes it easy to keep your financial transactions up-to-date without needing to manually run the application each time.
+
+---
+
+For all other methods, follow the steps below.
 
 ### Preparation
 
