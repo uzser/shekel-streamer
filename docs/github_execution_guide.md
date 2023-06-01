@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-1. GitHub Account: You will need a GitHub account to fork the repository and set up GitHub Actions. If you don't already have one, you can sign up at [https://github.com/join].
-2. Telegram Account: A Telegram account is required to get notifications from the bot. You can download the Telegram app on your phone or use the web version at [https://web.telegram.org/].
-3. OpenAI Account (Optional): You will need an OpenAI account to use the GPT-3 translation feature. You can sign up at [https://chat.openai.com/auth/login].
+1. GitHub Account: You will need a GitHub account to fork the repository and set up GitHub Actions. If you don't already have one, you can sign up at [https://github.com/join](https://github.com/join).
+2. Telegram Account: A Telegram account is required to get notifications from the bot. You can download the Telegram app on your phone or use the web version at [https://web.telegram.org/](https://web.telegram.org/).
+3. OpenAI Account (Optional): You will need an OpenAI account to use the GPT-3 translation feature. You can sign up at [https://chat.openai.com/auth/login](https://chat.openai.com/auth/login).
 
 ## Telegram Bot Creation
 
@@ -149,7 +149,7 @@ To convert your JSON configuration to Base64, you can use the following commands
 
 ## GitHub Forking and Setting Up
 
-1. If you haven't already, sign up for GitHub at [https://github.com/join].
+1. If you haven't already, sign up for GitHub at [https://github.com/join](https://github.com/join).
 2. Navigate to [this repository](https://github.com/uzser/shekel-streamer).
 3. Click on the "Fork" button at the top right of the page.
 4. Once the repository is forked to your account, click on the "Settings" tab.
@@ -190,7 +190,7 @@ If you're having trouble setting up the app, here are some things to check:
 1. Make sure you've set all the required secrets in your GitHub repository.
 2. Make sure you've set the `SCHEDULED_RUN_ENABLED` variable to 'true' if you want to enable scheduled running.
 
-For debugging purposes, you can set the `LOG_LEVEL` variable to `debug` to get more detailed logs.
+For debugging purposes, you can set the `LOG_LEVEL` variable to `debug` to get more detailed logs.  
 ❗️ Be aware that the debug logs can contain sensitive information. For example, the translation feature will log the translated text, which can contain transactation descriptions. Make sure to delete the debug logs after you're done debugging.
 
 If you're still having trouble, feel free to [open an issue](https://github.com/uzser/shekel-streamer/issues/new) and I'll try to help.
