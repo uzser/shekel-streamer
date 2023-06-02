@@ -170,6 +170,12 @@ To convert your JSON configuration to Base64, you can use the following commands
 
 ## Enabling/Disabling Scheduled Running
 
+1. Go to your GitHub repository and click on the "Actions" tab.
+2. Click on the green "I understand my workflows, go ahead and enable them" button.
+3. Click on the "Scheduled App Run" workflow and then click on the "Enable workflow" button.
+
+For manual running, you can click on the "Run workflow" button. For scheduled running, you can enable or disable it by following these steps:
+
 1. Go to your GitHub repository and click on the "Settings" tab.
 2. Click on "Secrets and variables" in the left sidebar. Then click on "Actions".
 3. Click on "Variables" tab.
