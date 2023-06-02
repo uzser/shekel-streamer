@@ -195,6 +195,8 @@ If you're having trouble setting up the app, here are some things to check:
 
 1. Make sure you've set all the required secrets in your GitHub repository.
 2. Make sure you've set the `SCHEDULED_RUN_ENABLED` variable to 'true' if you want to enable scheduled running.
+3. GitHub Actions are run on UTC time. Make sure you've set the schedule to the correct time in UTC (8 AM Israeli Daylight Time is 5 AM UTC, 8 AM Israeli Standard Time, in the winter, is 6 AM UTC). So in the winter, you'll need to set the schedule to `0 6 * * *` instead of `0 5 * * *`.
+4. GitHub Actions suspends scheduled workflows after 60 days of repository inactivity. If you haven't committed to your repository in 60 days, you'll need to re-enable the workflow by clicking on the "Enable workflow" button in the "Actions" tab.
 
 For debugging purposes, you can set the `LOG_LEVEL` variable to `debug` to get more detailed logs.  
 ❗️ Be aware that the debug logs can contain sensitive information. For example, the translation feature will log the translated text, which can contain transactation descriptions. Make sure to delete the debug logs after you're done debugging.
