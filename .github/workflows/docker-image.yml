@@ -26,4 +26,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: ${{ secrets.DOCKER_HUB_USERNAME }}/${{ github.repository }}:latest
+        tags: uzser/shekel-streamer:latest
