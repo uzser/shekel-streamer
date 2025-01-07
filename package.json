@@ -9,7 +9,7 @@
     "chatgpt": "^5.2.4",
     "cron": "^2.3.0",
     "dotenv": "^16.0.3",
-    "israeli-bank-scrapers": "^3.10.1",
+    "israeli-bank-scrapers": "^5.2.2",
     "luxon": "^3.3.0",
     "mongodb": "^5.5.0",
     "node-telegram-bot-api": "^0.61.0",
