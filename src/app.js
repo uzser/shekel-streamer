@@ -168,8 +168,14 @@ function formatDateTime(jsDate) {
 function format(transaction) {
   let date = formatDateTime(transaction.date);
   let processedDate = formatDateTime(transaction.processedDate);
+  let chargedAmount;
 
-  const chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
+  if (transaction.originalCurrency && transaction.originalCurrency.length == 3)
+    chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
+  else
+    chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(transaction.chargedAmount);
+
+
   const incomeOrExpenseEmoji = transaction.chargedAmount > 0 ? '💰' : '💸'; // 💰 for income, 💸 for expense
   let description = transaction.memo ? `${transaction.description} - ${transaction.memo}` : transaction.description;
 
@@ -190,6 +196,7 @@ Status: ${transaction.status}
  * @returns {Promise<string[]>} Translated descriptions
  */
 async function translateDescriptions(descriptions) {
+  logger.debug("Translating descriptions", { descriptions });
   if (!isTranslationEnabled) {
     return descriptions.map(_ => null);
   }
@@ -289,6 +296,8 @@ async function getTranslations(transactions) {
   let uniqueNotCachedDescrs = new Set();
   let cachedTranslations = {};
 
+  logger.debug(`Descriptions to translate: ${descriptionsToTranslate}`);
+
   for (const description of descriptionsToTranslate) {
     let cachedTranslation = await getTranslationFromCache(description);
     if (cachedTranslation) {
@@ -299,6 +308,7 @@ async function getTranslations(transactions) {
   }
 
   uniqueNotCachedDescrs = Array.from(uniqueNotCachedDescrs);
+  logger.debug("Unique descriptions not found in cache", { uniqueNotCachedDescrs });
 
   if (uniqueNotCachedDescrs.length > 0) {
     try {
@@ -378,6 +388,7 @@ async function getExistingTransactions(transactions) {
  * @returns {Promise<boolean>} true if transaction was inserted, false if transaction already exists
  */
 async function saveOrUpdate(transaction) {
+  logger.debug(`Saving or updating transaction`, { description: transaction.description });
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING);
   try {
     await client.connect();
@@ -445,6 +456,8 @@ async function checkMongoDB(uri) {
  * @param {string} chatId Telegram chat ID
  */
 async function notify(transaction, chatId, taskKey) {
+  logger.debug(`Sending notification to Telegram`, { transactionDbId: transaction._id, taskKey: taskKey });
+
   if (!process.env.TELEGRAM_BOT_TOKEN || !chatId) {
     logger.info('No Telegram bot token or chat ID found. Skipping notification.', { taskKey: taskKey });
     return;
@@ -515,7 +528,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
           translatedDescription: null, // will be filled later
           memo: txn.memo, // can be null
           originalAmount: txn.originalAmount,
-          originalCurrency: txn.originalCurrency, // can be null, possible wrong value: ILS instead of USD
+          originalCurrency: currencyToIsoCode(txn.originalCurrency), // can be null, possible wrong value: ILS instead of USD
           chargedAmount: txn.chargedAmount, // possible the same as originalAmount, even if originalCurrency is USD/EUR
           type: txn.type, // normal | installments
           status: txn.status, // completed | pending
@@ -541,6 +554,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
     transactions.sort((a, b) => a.date - b.date)
 
     const existingTransactions = await getExistingTransactions(transactions);
+    logger.debug(`Existing transactions found: ${existingTransactions.size}`, { taskKey });
 
     // Filter out the transactions that already exist in the db and don't need to be updated
     if (existingTransactions.size > 0) {
@@ -589,6 +603,15 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
       { taskKey, errorType: syncResult.errorType });
     logger.debug({ errorMessage: syncResult.errorMessage })
   }
+}
+
+/**
+ * Function to standardize currency symbols to ISO currency codes.
+ * @param {string} currency Currency symbol (e.g., ₪, $, €)
+ * @returns {string} ISO currency code (e.g., ILS, USD, EUR)
+ */
+function currencyToIsoCode(currency) {
+  return currency.replace('₪', 'ILS').replace('$', 'USD').replace('€', 'EUR');
 }
 
 /**
