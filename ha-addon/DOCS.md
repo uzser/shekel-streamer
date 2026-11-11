@@ -1,0 +1,45 @@
+# Shekel Streamer — Home Assistant add-on
+
+Scrapes your Israeli bank and card accounts once per start, stores the transactions in SQLite
+(`/data/db`), translates descriptions with OpenAI (optional) and posts each new transaction to a
+Telegram channel. The add-on exits after the run. Start it from an automation, for example daily:
+
+```yaml
+triggers:
+  - trigger: time
+    at: "08:00:00"
+actions:
+  - action: hassio.addon_start
+    data:
+      addon: <repository id>_shekel_streamer
+```
+
+## Options
+
+- `telegram_bot_token`: token of your bot (from @BotFather).
+- `telegram_owner_chat_id`: your private chat with the bot. Error alerts and SMS code requests go
+  there. Send `/start` to the bot once.
+- `accounts`: one entry per login. `company` (e.g. `hapoalim`), `user_name` (a short name; it
+  also names the browser profile), `telegram_channel_id` (where transactions go) and the
+  credential fields that the company needs (Hapoalim: `user_code`, `password`).
+- `openai_api_key`, `gpt_model_fast`: optional translation.
+- `healthcheck_url`: optional; called (POST) after a run where all accounts succeeded. Use an HA
+  webhook to detect days without a successful run.
+- `allowed_domains`: extra host name patterns (extended regex) for the egress allowlist, needed
+  for companies other than Hapoalim, e.g. `(^|\.)isracard\.co\.il$`.
+
+## Bank Hapoalim SMS code
+
+On a new device Bank Hapoalim asks for an SMS code. The bot writes to your private chat; reply
+with the code within `otp_timeout_minutes` (default 10). The browser profile in `/data/profiles`
+keeps the device known, so the bank asks again only when that trust expires.
+
+## Security model
+
+- Secrets are add-on options (password fields). The app reads them from a tmpfs copy that it
+  deletes after reading; they are never environment variables.
+- No ports, no ingress, no Home Assistant or Supervisor API.
+- Egress firewall: inside the add-on only the proxy (tinyproxy) may connect out, and it allows
+  only the bank host names, `api.telegram.org`, `api.openai.com` and `homeassistant`. A
+  compromised dependency cannot send your passwords anywhere else.
+- Logs (level `info`) contain counts and error types, not transaction data.

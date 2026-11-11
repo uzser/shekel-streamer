@@ -1,15 +1,17 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Install chromium
 RUN apk add --no-cache \
     chromium \
     nss \
-    ca-certificates
+    ca-certificates \
+    ttf-freefont
 
 # Tell Puppeteer to skip installing Chrome. We'll be using the installed package.
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-    DOCKER=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    DOCKER=true \
+    NODE_ENV=production
 
 # Add user for puppeteer to run under (non-root)
 RUN addgroup -S pptruser && adduser -S -G pptruser pptruser \
@@ -23,11 +25,11 @@ USER pptruser
 # Set working directory
 WORKDIR /app
 
-# Install app dependencies
+# Install app dependencies (no install scripts: fewer packages that can run code at build time)
 COPY --chown=pptruser package.json yarn.lock ./
-RUN yarn
+RUN yarn install --frozen-lockfile --production --ignore-scripts && yarn cache clean
 
-# Bundle app source
-COPY . .
+# Bundle app source (never .env: .dockerignore is a whitelist)
+COPY src ./src
 
-CMD [ "yarn", "start"]
+CMD [ "node", "src/app.js"]

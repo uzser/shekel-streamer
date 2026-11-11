@@ -1,0 +1,49 @@
+name: Shekel Streamer
+version: "2.0.0"
+slug: shekel_streamer
+description: Israeli bank and card transactions to Telegram. One run per start; start it daily from an automation.
+url: https://github.com/uzser/shekel-streamer
+arch:
+  - aarch64
+  - amd64
+image: ghcr.io/uzser/{arch}-shekel-streamer-addon
+startup: once
+boot: manual
+init: false
+# Least privilege: no ports, no ingress, no Supervisor or Home Assistant API, own network namespace.
+hassio_api: false
+homeassistant_api: false
+host_network: false
+# Only for the egress firewall inside the add-on's own network namespace (iptables owner match).
+privileged:
+  - NET_ADMIN
+options:
+  telegram_bot_token: ""
+  telegram_owner_chat_id: ""
+  sync_days_count: 7
+  allowed_domains: []
+  accounts: []
+schema:
+  telegram_bot_token: password
+  telegram_owner_chat_id: str
+  openai_api_key: password?
+  gpt_model_fast: str?
+  sync_days_count: int(1,365)
+  otp_timeout_minutes: int(1,30)?
+  # e.g. http://homeassistant:8123/api/webhook/<id>: called after a fully successful run.
+  healthcheck_url: password?
+  log_level: list(info|warn|error)?
+  # Extra host name patterns (extended regex) for the egress allowlist, e.g. (^|\.)isracard\.co\.il$
+  allowed_domains:
+    - str
+  accounts:
+    - company: list(hapoalim|leumi|discount|mizrahi|beinleumi|isracard|amex|visaCal|max|oneZero)
+      user_name: match(^[A-Za-z0-9_-]+$)
+      telegram_channel_id: str?
+      user_code: password?
+      id: password?
+      card6digits: password?
+      username: password?
+      num: password?
+      national_id: password?
+      password: password
