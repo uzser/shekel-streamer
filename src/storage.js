@@ -25,6 +25,7 @@ export function transactionKey(t) {
  *   setTranslation(description: string, translation: string): Promise<void>,
  *   getExistingKeys(transactions: any[]): Promise<Set<string>>,
  *   saveOrUpdate(transaction: any): Promise<boolean>,
+ *   importHistory?(data: object): Promise<{transactions: number, skipped: number, translations: number}>,
  *   close(): Promise<void>,
  * }>}
  */
@@ -105,6 +106,34 @@ async function createSqliteStorage(file) {
       insertTxn.run(iso(t.date), t.chargedAmount, t.description, iso(t.processedDate), t.status,
         t.translatedDescription ?? null, JSON.stringify(t), now);
       return true;
+    },
+    // One-time import of an old history (MongoDB export, format shekel-streamer-history-v1).
+    // Existing rows are kept; nothing is sent to Telegram.
+    async importHistory({ format, transactions = [], translations = [] }) {
+      if (format !== 'shekel-streamer-history-v1') {
+        throw new Error(`Unknown history format: ${format}`);
+      }
+      const result = { transactions: 0, skipped: 0, translations: 0 };
+      db.exec('BEGIN');
+      try {
+        for (const { _createdAt, ...t } of transactions) {
+          if (findTxn.get(iso(t.date), t.chargedAmount, t.description)) {
+            result.skipped++;
+            continue;
+          }
+          insertTxn.run(iso(t.date), t.chargedAmount, t.description, iso(t.processedDate), t.status,
+            t.translatedDescription ?? null, JSON.stringify(t), _createdAt || new Date().toISOString());
+          result.transactions++;
+        }
+        for (const { description, translation } of translations) {
+          result.translations += Number(setTr.run(description, translation ?? null).changes);
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      return result;
     },
     async close() {
       db.close();

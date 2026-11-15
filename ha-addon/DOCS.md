@@ -35,6 +35,14 @@ On a new device Bank Hapoalim asks for an SMS code. The bot writes to your priva
 with the code within `otp_timeout_minutes` (default 10). The browser profile in `/data/profiles`
 keeps the device known, so the bank asks again only when that trust expires.
 
+## Import an old history
+
+Put `history-import.json` (format `shekel-streamer-history-v1`: `transactions` = the documents
+of the old MongoDB collection with ISO dates, `translations` = `{description, translation}`)
+into the add-on config folder (`/addon_configs/<repository id>_shekel_streamer/`, e.g. with
+File editor) and start the add-on. It imports rows that are not in the database yet, sends
+nothing to Telegram and deletes the file.
+
 ## Security model
 
 - Secrets are add-on options (password fields). The app reads them from a tmpfs copy that it

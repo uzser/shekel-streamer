@@ -54,10 +54,20 @@ chmod 0700 /data/db /data/profiles
 
 install -o app -m 0600 "$OPTIONS" /dev/shm/options.json
 
+# One-time history import: the owner puts history-import.json into the add-on config folder
+# (/config here). It moves to the app's own folder; the app deletes it after the import.
+IMPORT=/data/db/history-import.json
+if [ -f /config/history-import.json ]; then
+  mv /config/history-import.json "$IMPORT"
+  chown app "$IMPORT"
+  chmod 0600 "$IMPORT"
+  echo "history import file found"
+fi
+
 export CONFIG_FILE=/dev/shm/options.json CONFIG_FILE_DELETE=true \
        SQLITE_PATH=/data/db/shekel-streamer.db BROWSER_PROFILES_DIR=/data/profiles \
        PROXY_SERVER=$PROXY HTTPS_PROXY=$PROXY HTTP_PROXY=$PROXY NODE_USE_ENV_PROXY=1 \
-       HOME=/tmp
+       IMPORT_FILE=$IMPORT HOME=/tmp
 
 set +e
 su-exec app node /app/src/app.js

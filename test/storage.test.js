@@ -53,6 +53,32 @@ test('sqlite: translation cache', async () => {
   await storage.close();
 });
 
+test('sqlite: history import adds new rows once and keeps translations', async () => {
+  const storage = await tempStorage();
+  await storage.saveOrUpdate(txn({ translatedDescription: 'Supermarket' }));
+  const old = {
+    ...txn({ translatedDescription: 'Supermarket', status: 'completed' }),
+    date: '2026-11-01T00:00:00.000Z', // same key as the row above: skipped
+    processedDate: '2026-11-02T00:00:00.000Z',
+    _createdAt: '2026-11-01T08:00:00.000Z',
+  };
+  const older = { ...old, date: '2024-01-05T22:00:00.000Z', description: 'מוביט', translatedDescription: 'Moovit' };
+  const data = {
+    format: 'shekel-streamer-history-v1',
+    transactions: [old, older],
+    translations: [{ description: 'מוביט', translation: 'Moovit' }],
+  };
+
+  assert.deepEqual(await storage.importHistory(data), { transactions: 1, skipped: 1, translations: 1 });
+  assert.deepEqual(await storage.importHistory(data), { transactions: 0, skipped: 2, translations: 0 });
+  assert.equal(await storage.getTranslation('מוביט'), 'Moovit');
+  // The imported row counts as existing (it has a translation), so it is not posted again.
+  const again = txn({ date: new Date(older.date), description: 'מוביט', status: 'completed' });
+  assert.equal((await storage.getExistingKeys([again])).size, 1);
+  await assert.rejects(storage.importHistory({ format: 'other' }), /format/);
+  await storage.close();
+});
+
 test('telegram: HTML escaping', () => {
   assert.equal(escapeHtml('A&B <b>*_x_*</b>'), 'A&amp;B &lt;b&gt;*_x_*&lt;/b&gt;');
   assert.equal(escapeHtml(undefined), '');

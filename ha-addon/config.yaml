@@ -1,5 +1,5 @@
 name: Shekel Streamer
-version: "2.0.2"
+version: "2.1.0"
 slug: shekel_streamer
 description: Israeli bank and card transactions to Telegram. One run per start; start it daily from an automation.
 url: https://github.com/uzser/shekel-streamer
@@ -17,6 +17,9 @@ host_network: false
 # Only for the egress firewall inside the add-on's own network namespace (iptables owner match).
 privileged:
   - NET_ADMIN
+# Own config folder only (/config here): drop history-import.json there for a one-time import.
+map:
+  - app_config:rw
 options:
   telegram_bot_token: ""
   telegram_owner_chat_id: ""

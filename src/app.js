@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { createScraper, CompanyTypes, SCRAPERS } from 'israeli-bank-scrapers';
 import { CronJob } from 'cron';
@@ -61,6 +62,18 @@ try {
 } catch (error) {
   logger.error('Failed to open the database.', { errorMessage: error.message });
   process.exit(1);
+}
+
+// One-time history import (SQLite only). The file is deleted after a successful import.
+const IMPORT_FILE = cfg('IMPORT_FILE');
+if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {
+  try {
+    const result = await storage.importHistory(JSON.parse(fs.readFileSync(IMPORT_FILE, 'utf8')));
+    fs.unlinkSync(IMPORT_FILE);
+    logger.info('History import finished.', result);
+  } catch (error) {
+    logger.error('History import failed. The file stays for the next run.', { errorMessage: error.message });
+  }
 }
 
 await initializeSyncTasks();
