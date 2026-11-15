@@ -24,7 +24,8 @@ actions:
   credential fields that the company needs (Hapoalim: `user_code`, `password`).
 - `openai_api_key`, `gpt_model_fast`: optional translation.
 - `healthcheck_url`: optional; called (POST) after a run where all accounts succeeded. Use an HA
-  webhook to detect days without a successful run.
+  webhook to detect days without a successful run: `http://homeassistant:8123/api/webhook/<id>`.
+  Other hosts need `allowed_domains` and port 443.
 - `allowed_domains`: extra host name patterns (extended regex) for the egress allowlist, needed
   for companies other than Hapoalim, e.g. `(^|\.)isracard\.co\.il$`.
 
