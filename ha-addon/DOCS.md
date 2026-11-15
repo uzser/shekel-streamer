@@ -40,6 +40,6 @@ keeps the device known, so the bank asks again only when that trust expires.
   deletes after reading; they are never environment variables.
 - No ports, no ingress, no Home Assistant or Supervisor API.
 - Egress firewall: inside the add-on only the proxy (tinyproxy) may connect out, and it allows
-  only the bank host names, `api.telegram.org`, `api.openai.com` and `homeassistant`. A
-  compromised dependency cannot send your passwords anywhere else.
+  only the bank host names, `api.telegram.org`, `api.openai.com` and `homeassistant`. Only the
+  proxy may use DNS. A compromised dependency cannot send your passwords anywhere else.
 - Logs (level `info`) contain counts and error types, not transaction data.

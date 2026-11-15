@@ -12,8 +12,16 @@ OPTIONS=/data/options.json
 firewall() {
   cmd=$1
   $cmd -F OUTPUT
-  $cmd -A OUTPUT -o lo -j ACCEPT
   $cmd -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  if [ "$cmd" = iptables ]; then
+    # Docker's DNS server 127.0.0.11: only the proxy may resolve names (no DNS leak for the app).
+    # Docker forwards the queries from this network namespace as root, so root may send DNS out.
+    $cmd -A OUTPUT -o lo -d 127.0.0.11 -m owner --uid-owner tinyproxy -j ACCEPT
+    $cmd -A OUTPUT -o lo -d 127.0.0.11 -j REJECT
+    $cmd -A OUTPUT -p udp --dport 53 -m owner --uid-owner 0 -j ACCEPT
+    $cmd -A OUTPUT -p tcp --dport 53 -m owner --uid-owner 0 -j ACCEPT
+  fi
+  $cmd -A OUTPUT -o lo -j ACCEPT
   $cmd -A OUTPUT -m owner --uid-owner tinyproxy -j ACCEPT
   $cmd -A OUTPUT -j REJECT
 }
