@@ -9,9 +9,10 @@
 // profile keeps the cookies and localStorage that mark the device as known, so the bank asks
 // for a code again only when that trust expires (about 30 days).
 //
-// History: the upstream scraper fetches at most one year back from "now" (moment()). For an
-// older start date, fetchData() gets one-year windows and moves moment's clock to the end of
-// each window.
+// History: the upstream scraper asks for at most one year back from "now" (moment()), and the
+// bank returns at most 150 rows per request (the newest ones; seen 2026-11). For a start date
+// more than one month back, fetchData() asks month by month: moment's clock moves to the end of
+// each window and options.startDate to its start.
 
 import moment from 'moment';
 import hapoalimModule from 'israeli-bank-scrapers/lib/scrapers/hapoalim.js';
@@ -34,6 +35,8 @@ const MAX_OTP_ATTEMPTS = 3;
 const LOGIN_SETTLE_TIMEOUT_MS = 20000;
 const OTP_RESULT_TIMEOUT_MS = 20000;
 const HOME_TIMEOUT_MS = 15000;
+// Rows per request that the bank returns at most.
+const BANK_MAX_ROWS = 150;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -88,22 +91,29 @@ export class HapoalimOtpScraper extends HapoalimScraper {
   }
 
   async fetchData() {
-    const { startDate } = this.options;
-    if (!startDate || moment(startDate).isAfter(moment().subtract(1, 'years'))) {
+    const { options } = this;
+    const { startDate } = options;
+    if (!startDate || moment(startDate).isAfter(moment().subtract(1, 'months'))) {
       return super.fetchData();
     }
     const realNow = moment.now;
     const accounts = new Map();
     try {
-      // Windows from the newest: [end - 1 year + 1 day, end], the oldest one starts at startDate.
-      for (let end = moment(); end.isAfter(startDate); end = end.clone().subtract(1, 'years')) {
+      // Windows from the newest: [end - 1 month + 1 day, end], the oldest one starts at startDate.
+      for (let end = moment(); end.isAfter(startDate); end = end.clone().subtract(1, 'months')) {
         const endMs = end.valueOf();
         moment.now = () => endMs;
+        const windowStart = moment.max(moment(startDate), end.clone().subtract(1, 'months').add(1, 'days'));
+        this.options = { ...options, startDate: windowStart.toDate() };
         const result = await super.fetchData();
         if (!result.success) {
           return result;
         }
         for (const account of result.accounts) {
+          if (account.txns.length >= BANK_MAX_ROWS) {
+            return failure('GENERAL_ERROR',
+              `Bank Hapoalim returned ${account.txns.length} rows for one month; some rows can be missing`);
+          }
           if (!accounts.has(account.accountNumber)) {
             accounts.set(account.accountNumber, { ...account, txns: [] });
           }
@@ -112,6 +122,7 @@ export class HapoalimOtpScraper extends HapoalimScraper {
       }
     } finally {
       moment.now = realNow;
+      this.options = options;
     }
     return { success: true, accounts: [...accounts.values()] };
   }

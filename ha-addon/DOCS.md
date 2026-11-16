@@ -51,8 +51,8 @@ Put `backfill.json` into the same folder and start the add-on:
 { "from": "2025-01-01", "dryRun": true }
 ```
 
-- The sync starts at `from`. Bank Hapoalim: the add-on asks in one-year windows; the bank
-  decides how far back it gives data.
+- The sync starts at `from`. Bank Hapoalim: the add-on asks month by month (the bank returns
+  at most 150 rows per request) and gives data for about 3 years back.
 - Rows that are already in the database stay as they are (also when the date is some hours off,
   as in an old history).
 - New rows older than `sync_days_count` days are stored without a Telegram post.
