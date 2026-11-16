@@ -69,11 +69,22 @@ done
 export CONFIG_FILE=/dev/shm/options.json CONFIG_FILE_DELETE=true \
        SQLITE_PATH=/data/db/shekel-streamer.db BROWSER_PROFILES_DIR=/data/profiles \
        PROXY_SERVER=$PROXY HTTPS_PROXY=$PROXY HTTP_PROXY=$PROXY NODE_USE_ENV_PROXY=1 \
-       IMPORT_FILE=/data/db/history-import.json BACKFILL_FILE=/data/db/backfill.json HOME=/tmp
+       IMPORT_FILE=/data/db/history-import.json BACKFILL_FILE=/data/db/backfill.json \
+       EXPORT_FILE=/data/db/export.sqlite HOME=/tmp
 
 set +e
 su-exec app node /app/src/app.js
 code=$?
 kill "$PROXY_PID" 2>/dev/null
 rm -f /dev/shm/options.json
+
+# Database copy for analysis: /config/export/shekel.sqlite (replaced after each run).
+# Move to a temporary name first: the rename in the same folder is atomic.
+if [ -f /data/db/export.sqlite ]; then
+  mkdir -p /config/export
+  mv /data/db/export.sqlite /config/export/shekel.sqlite.tmp \
+    && chmod 0600 /config/export/shekel.sqlite.tmp \
+    && mv /config/export/shekel.sqlite.tmp /config/export/shekel.sqlite \
+    && echo "database copy: /config/export/shekel.sqlite"
+fi
 exit $code

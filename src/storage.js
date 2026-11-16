@@ -27,6 +27,7 @@ export function transactionKey(t) {
  *   saveOrUpdate(transaction: any): Promise<boolean>,
  *   importHistory?(data: object): Promise<{transactions: number, skipped: number, translations: number}>,
  *   hasNear?(transaction: any): Promise<boolean>,
+ *   exportTo?(file: string): Promise<void>,
  *   close(): Promise<void>,
  * }>}
  */
@@ -146,6 +147,12 @@ async function createSqliteStorage(file) {
         throw error;
       }
       return result;
+    },
+    // A consistent copy of the whole database (for analysis outside the add-on).
+    async exportTo(target) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.rmSync(target, { force: true }); // VACUUM INTO needs a new file
+      db.prepare('VACUUM INTO ?').run(target);
     },
     async close() {
       db.close();

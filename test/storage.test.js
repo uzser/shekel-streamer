@@ -90,6 +90,23 @@ test('sqlite: hasNear finds a row some hours off, not one on the next day', asyn
   await storage.close();
 });
 
+test('sqlite: exportTo writes a full copy and replaces an old one', async () => {
+  const storage = await tempStorage();
+  await storage.saveOrUpdate(txn({ translatedDescription: 'Supermarket' }));
+  await storage.setTranslation('סופר', 'Supermarket');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shekel-export-')), 'out', "it's.sqlite");
+  await storage.exportTo(file);
+  await storage.saveOrUpdate(txn({ description: 'מוביט' }));
+  await storage.exportTo(file); // second copy replaces the first
+  await storage.close();
+
+  const { DatabaseSync } = await import('node:sqlite');
+  const copy = new DatabaseSync(file, { readOnly: true });
+  assert.equal(copy.prepare('SELECT count(*) AS n FROM transactions').get().n, 2);
+  assert.equal(copy.prepare('SELECT translation FROM translations').get().translation, 'Supermarket');
+  copy.close();
+});
+
 test('telegram: HTML escaping', () => {
   assert.equal(escapeHtml('A&B <b>*_x_*</b>'), 'A&amp;B &lt;b&gt;*_x_*&lt;/b&gt;');
   assert.equal(escapeHtml(undefined), '');

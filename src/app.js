@@ -158,9 +158,25 @@ async function initializeSyncTasks() {
 
 async function exit(code) {
   try {
+    await exportDatabase();
     await storage?.close();
   } finally {
     process.exit(code);
+  }
+}
+
+// EXPORT_FILE: a copy of the database for analysis, written at the end of each one-shot run.
+// The add-on moves it to its config folder. A failed copy does not change the exit code.
+async function exportDatabase() {
+  const file = cfg('EXPORT_FILE');
+  if (!file || !storage?.exportTo) {
+    return;
+  }
+  try {
+    await storage.exportTo(file);
+    logger.info('Database copy written.', { file });
+  } catch (error) {
+    logger.error('Database copy failed.', { errorMessage: error.message });
   }
 }
 
