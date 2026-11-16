@@ -23,7 +23,10 @@ actions:
   also names the browser profile), `telegram_channel_id` (where transactions go) and the
   credential fields that the company needs (Hapoalim: `user_code`, `password`; Isracard and
   Amex: `id`, `card6digits` and the fixed password `password`; Visa Cal: `username`,
-  `password`). The scrapers log in with a password only, not with a one-time code.
+  `password`, or `id` and `last4digits` for the SMS login). Hapoalim asks for an SMS code only
+  from a new device. Visa Cal with `id` and `last4digits` asks for a code on each login: the SMS
+  goes to the card owner's phone, the bot asks you for the code in your private chat. Cal shows a
+  user name only the cards tied to it; the SMS login sees all cards of the ID number.
 - `openai_api_key`, `gpt_model_fast`: optional translation.
 - `healthcheck_url`: optional; called (POST) after a run where all accounts succeeded. Use an HA
   webhook to detect days without a successful run: `http://homeassistant:8123/api/webhook/<id>`.

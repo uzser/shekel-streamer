@@ -6,7 +6,7 @@ import moment from 'moment';
 import visaCalModule from 'israeli-bank-scrapers/lib/scrapers/visa-cal.js';
 import fetchModule from 'israeli-bank-scrapers/lib/helpers/fetch.js';
 
-import { VisaCalLoginScraper } from '../src/visa-cal-login.js';
+import { VisaCalLoginScraper, isOtpLogin } from '../src/visa-cal-login.js';
 import { redactScraperError } from '../src/redact.js';
 
 const VisaCalScraper = visaCalModule.default ?? visaCalModule;
@@ -169,6 +169,94 @@ test('visaCal: no login form after 3 clicks is an error', async () => {
   const { page, clicks } = fakePage(Infinity);
   await assert.rejects(scraper(page).openLoginPopup(), /failed to open the password login tab/);
   assert.equal(clicks.length, 3);
+});
+
+// A fake page for the SMS login: the code field shows after the first click on the submit button.
+function fakeOtpPage() {
+  const events = [];
+  const frame = {
+    url: () => 'https://connect.cal-online.co.il/send-otp',
+    waitForSelector: async () => {},
+    $eval: async selector => { events.push(`click ${selector}`); },
+    type: async (selector, value) => { events.push(`type ${selector} ${value}`); },
+    $: async selector => (selector === '[formcontrolname="otp"]' && !events.some(e => e.startsWith('click button'))
+      ? null : { isVisible: async () => true }),
+    evaluate: async () => '',
+  };
+  const page = {
+    waitForSelector: async () => {},
+    waitForRequest: () => new Promise(() => {}),
+    on: (name) => events.push(`on ${name}`),
+    $eval: async () => {},
+    frames: () => [frame],
+  };
+  return { page, frame, events };
+}
+
+test('visaCal: id + last4Digits is the SMS login, user name + password is not', () => {
+  assert.equal(isOtpLogin({ id: '1', last4Digits: '1234' }), true);
+  assert.equal(isOtpLogin({ username: 'u', password: 'p' }), false);
+  assert.equal(isOtpLogin({ id: '1' }), false);
+
+  const { page } = fakeOtpPage();
+  const s = scraper(page);
+  const otp = s.getLoginOptions({ id: '000000018', last4Digits: '1234' });
+  assert.deepEqual(otp.fields, [
+    { selector: '[formcontrolname="id"]', value: '000000018' },
+    { selector: '[formcontrolname="secondOtpParam"]', value: '1234' },
+  ]);
+  assert.equal(typeof otp.submitButtonSelector, 'function');
+  const password = s.getLoginOptions({ username: 'u', password: 'p' });
+  assert.equal(password.fields[0].selector, '[formcontrolname="userName"]');
+  assert.equal(password.submitButtonSelector, 'button[type="submit"]');
+});
+
+test('visaCal: SMS login sends the code request, types the code from the retriever, submits', async () => {
+  const { page, events } = fakeOtpPage();
+  const asked = [];
+  const s = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async info => {
+    asked.push(info);
+    return ' 123456 ';
+  });
+  s.page = page;
+  s.retryPauseMs = 5;
+
+  await s.submitOtp();
+
+  assert.deepEqual(asked, [{ attempt: 1 }]);
+  assert.deepEqual(events, [
+    'click button[type="submit"]',
+    'click [formcontrolname="otp"]',
+    'type [formcontrolname="otp"] 123456',
+    'on response',
+    'click button[type="submit"]',
+  ]);
+});
+
+test('visaCal: SMS login with no code or no code field is an error', async () => {
+  const noCode = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async () => null);
+  noCode.page = fakeOtpPage().page;
+  noCode.retryPauseMs = 5;
+  await assert.rejects(noCode.submitOtp(), /no SMS code$/);
+
+  const { page, frame } = fakeOtpPage();
+  frame.$ = async () => null;
+  const noField = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async () => '1');
+  noField.page = page;
+  noField.retryPauseMs = 5;
+  noField.otpFormTimeoutMs = 30;
+  await assert.rejects(noField.submitOtp(), /no SMS code field/);
+});
+
+test('visaCal: login responses keep the paths and result keys, the hash goes to loginHash', async () => {
+  const s = scraper(fakeOtpPage().page);
+  const response = (url, json) => ({ url: () => url, json: async () => json });
+  await s.readLoginResponse(response('https://api.cal-online.co.il/Authentication/api/login/verifyOTP',
+    { result: { calConnectToken: 't', hash: 'h' } }));
+  await s.readLoginResponse(response('https://api.cal-online.co.il/Transactions/api/x', { result: { a: 1 } }));
+  await s.readLoginResponse(response('https://evil.example/login', { result: { hash: 'x' } }));
+  assert.deepEqual(s.loginInfo, [{ path: '/Authentication/api/login/verifyOTP', keys: ['calConnectToken', 'hash'] }]);
+  assert.equal(s.loginHash, 'h');
 });
 
 test('redact: the request body of a scraper error is removed', () => {

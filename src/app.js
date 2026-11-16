@@ -11,7 +11,7 @@ import { cfg, allSettings } from './config.js';
 import { createStorage, transactionKey } from './storage.js';
 import { sendMessage, askForCode, escapeHtml } from './telegram.js';
 import { HapoalimOtpScraper } from './hapoalim-otp.js';
-import { VisaCalLoginScraper } from './visa-cal-login.js';
+import { VisaCalLoginScraper, isOtpLogin } from './visa-cal-login.js';
 import { redactScraperError } from './redact.js';
 import { toStoredTransaction } from './stored-transaction.js';
 
@@ -551,10 +551,18 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
     const scraper = companyId === CompanyTypes.hapoalim
       ? new HapoalimOtpScraper(scraperOptions, createOtpCodeRetriever(taskKey))
       : companyId === CompanyTypes.visaCal
-        ? new VisaCalLoginScraper(scraperOptions)
+        ? new VisaCalLoginScraper(scraperOptions, createOtpCodeRetriever(taskKey))
         : createScraper(scraperOptions);
 
     syncResult = await scraper.scrape(credentials);
+    if (scraper.loginInfo?.length) {
+      // Cal SMS login: paths and result keys only, no values.
+      logger.info('Cal login responses.', { taskKey, responses: scraper.loginInfo, hash: Boolean(scraper.loginHash) });
+    }
+    if (scraper.loginHash && BROWSER_PROFILES_DIR) {
+      // A login token of the Cal app (no SMS). A secret: same protection as the browser profile.
+      fs.writeFileSync(path.join(BROWSER_PROFILES_DIR, `${taskKey}.cal-hash`), scraper.loginHash, { mode: 0o600 });
+    }
     if (scraper.historyNote) {
       logger.info('History limit.', { taskKey, note: redactScraperError(scraper.historyNote).slice(0, 300) });
     }
@@ -569,6 +577,10 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
       errorMessage: redactScraperError(syncResult.errorMessage).slice(0, 300),
     });
     return { success: false, errorType: syncResult.errorType };
+  }
+
+  if (companyId === CompanyTypes.visaCal) {
+    logger.info('Cards.', { taskKey, cards: syncResult.accounts.map(a => `${a.accountNumber}: ${a.txns.length} rows`) });
   }
 
   let transactions = [];
@@ -780,7 +792,9 @@ function getTransactionSyncTasksFromJSON(usersJson) {
         return;
       }
 
-      const missingFields = scraper.loginFields.filter(field => !credentials.hasOwnProperty(field));
+      // Visa Cal with `id` + `last4Digits`: the SMS login, no user name and password.
+      const loginFields = companyTypeKey === 'visaCal' && isOtpLogin(credentials) ? [] : scraper.loginFields;
+      const missingFields = loginFields.filter(field => !credentials.hasOwnProperty(field));
       if (missingFields.length > 0) {
         logger.error(`Missing required fields for company. Check user #${userIndex}, company #${companyIndex} (index starts from 0): Missing fields: ${missingFields.join(', ')}`);
         return;
@@ -807,12 +821,12 @@ function getTransactionSyncTasksFromJSON(usersJson) {
 /**
  * Converts the flat `accounts` list of the config file (Home Assistant add-on options) into the
  * USERS_JSON structure. Each account is one login: { company, user_name, telegram_channel_id,
- * user_code, password, id, card6digits, username, num, national_id }.
+ * user_code, password, id, card6digits, username, num, national_id, last4digits }.
  */
 function accountsToUsersJson(accounts) {
   const fieldNames = {
     user_code: 'userCode', password: 'password', id: 'id', card6digits: 'card6Digits',
-    username: 'username', num: 'num', national_id: 'nationalID',
+    username: 'username', num: 'num', national_id: 'nationalID', last4digits: 'last4Digits',
   };
   return accounts.map(account => {
     const company = { companyName: account.company };

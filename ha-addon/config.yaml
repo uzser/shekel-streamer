@@ -1,5 +1,5 @@
 name: Shekel Streamer
-version: "2.9.0"
+version: "2.10.0"
 slug: shekel_streamer
 description: Israeli bank and card transactions to Telegram. One run per start; start it daily from an automation.
 url: https://github.com/uzser/shekel-streamer
@@ -49,4 +49,6 @@ schema:
       username: password?
       num: password?
       national_id: password?
-      password: password
+      # Visa Cal SMS login: `id` + the last 4 digits of any card; no `username` and `password`.
+      last4digits: password?
+      password: password?
