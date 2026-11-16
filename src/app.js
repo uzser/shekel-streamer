@@ -13,6 +13,7 @@ import { sendMessage, askForCode, escapeHtml } from './telegram.js';
 import { HapoalimOtpScraper } from './hapoalim-otp.js';
 import { VisaCalLoginScraper } from './visa-cal-login.js';
 import { redactScraperError } from './redact.js';
+import { toStoredTransaction } from './stored-transaction.js';
 
 
 const DB_NAME = cfg('DB_NAME', 'shekelStreamer');
@@ -278,9 +279,12 @@ function format(transaction) {
   let date = formatDateTime(transaction.date);
   let processedDate = formatDateTime(transaction.processedDate);
   let chargedAmount;
+  // Completed card rows: chargedCurrency (purchases abroad are charged in USD or EUR).
+  // Pending card rows have no chargedCurrency; their amount is in the original currency.
+  const currency = transaction.chargedCurrency || transaction.originalCurrency;
 
-  if (transaction.originalCurrency && transaction.originalCurrency.length == 3)
-    chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: transaction.originalCurrency }).format(transaction.chargedAmount);
+  if (currency && currency.length == 3)
+    chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency }).format(transaction.chargedAmount);
   else
     chargedAmount = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(transaction.chargedAmount);
 
@@ -560,25 +564,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   let transactions = [];
   syncResult.accounts.forEach((account) => {
     account.txns.forEach((txn) => {
-      transactions.push({
-        accountNumber: account.accountNumber,
-        date: new Date(txn.date),
-        description: txn.description,
-        translatedDescription: null, // will be filled later
-        memo: txn.memo, // can be null
-        originalAmount: txn.originalAmount,
-        originalCurrency: currencyToIsoCode(txn.originalCurrency), // can be null, possible wrong value: ILS instead of USD
-        chargedAmount: txn.chargedAmount, // possible the same as originalAmount, even if originalCurrency is USD/EUR
-        type: txn.type, // normal | installments
-        status: txn.status, // completed | pending
-        identifier: txn.identifier, // can be null
-        processedDate: new Date(txn.processedDate),
-        installments: txn.installments, // can be null
-        category: txn.category, // can be null
-        companyId: companyId,
-        userCode: user,
-        chatId: chatId
-      });
+      transactions.push(toStoredTransaction(account, txn, { companyId, user, chatId }));
     });
   });
 
@@ -662,15 +648,6 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`,
     { taskKey, ...(taskBackfill && { notPosted: counters.notPosted }) });
   return { success: true };
-}
-
-/**
- * Function to standardize currency symbols to ISO currency codes.
- * @param {string} currency Currency symbol (e.g., ₪, $, €)
- * @returns {string} ISO currency code (e.g., ILS, USD, EUR)
- */
-function currencyToIsoCode(currency) {
-  return (currency || '').replace('₪', 'ILS').replace('$', 'USD').replace('€', 'EUR');
 }
 
 /**

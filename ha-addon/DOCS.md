@@ -84,7 +84,9 @@ At the end of each run the add-on writes a copy of its database to
 `/addon_configs/<repository id>_shekel_streamer/export/shekel.sqlite` (SQLite, replaced each
 run). Read it with File editor, File Browser or Samba and open it with any SQLite tool. Tables:
 `transactions` (one row per transaction; column `doc` holds all fields as JSON) and
-`translations`. The copy has no passwords or tokens (they are add-on options, not in the
+`translations`. `doc.chargedAmount` is in the currency of the charge: card purchases abroad are
+charged in USD or EUR, not ILS. Since 2.8.0 `doc.chargedCurrency` gives it (completed card rows;
+older rows and pending card rows have none). The copy has no passwords or tokens (they are add-on options, not in the
 database), but it has your full transaction history: everybody who can open the add-on config
 folder can read it.
 
