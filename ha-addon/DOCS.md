@@ -66,6 +66,18 @@ Put `backfill.json` into the same folder and start the add-on:
 - `dryRun: true` only logs the counts by month (found, missing).
 - The file is used once: the add-on deletes it at the start. To try again, put it there again.
 
+## Rows of a card under the wrong user (reassign)
+
+If a card or account was first configured under the wrong `user_name`, fix the stored rows:
+put `reassign.json` into the add-on config folder and start the add-on.
+
+```json
+{ "company": "visaCal", "account": "6422", "user": "ALEX" }
+```
+
+`account` is the account number as the bank gives it (for cards: the last 4 digits). The log
+line "Reassign finished." gives the number of changed rows; the file is deleted after success.
+
 ## Database copy for analysis
 
 At the end of each run the add-on writes a copy of its database to

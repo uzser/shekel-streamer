@@ -55,9 +55,10 @@ chmod 0700 /data/db /data/profiles
 install -o app -m 0600 "$OPTIONS" /dev/shm/options.json
 
 # One-time files: the owner puts them into the add-on config folder (/config here).
-# history-import.json: old history; backfill.json: a longer sync that posts only recent rows.
+# history-import.json: old history; backfill.json: a longer sync that posts only recent rows;
+# reassign.json: the stored rows of one card or account get another user.
 # They move to the app's own folder; the app deletes each one after a successful run.
-for name in history-import backfill; do
+for name in history-import backfill reassign; do
   if [ -f "/config/$name.json" ]; then
     mv "/config/$name.json" "/data/db/$name.json"
     chown app "/data/db/$name.json"
@@ -70,7 +71,7 @@ export CONFIG_FILE=/dev/shm/options.json CONFIG_FILE_DELETE=true \
        SQLITE_PATH=/data/db/shekel-streamer.db BROWSER_PROFILES_DIR=/data/profiles \
        PROXY_SERVER=$PROXY HTTPS_PROXY=$PROXY HTTP_PROXY=$PROXY NODE_USE_ENV_PROXY=1 \
        IMPORT_FILE=/data/db/history-import.json BACKFILL_FILE=/data/db/backfill.json \
-       EXPORT_FILE=/data/db/export.sqlite HOME=/tmp
+       REASSIGN_FILE=/data/db/reassign.json EXPORT_FILE=/data/db/export.sqlite HOME=/tmp
 
 set +e
 su-exec app node /app/src/app.js

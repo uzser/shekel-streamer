@@ -27,6 +27,7 @@ export function transactionKey(t) {
  *   saveOrUpdate(transaction: any): Promise<boolean>,
  *   importHistory?(data: object): Promise<{transactions: number, skipped: number, translations: number}>,
  *   hasNear?(transaction: any): Promise<boolean>,
+ *   reassignUser?(fix: {company: string, account: string, user: string}): Promise<number>,
  *   exportTo?(file: string): Promise<void>,
  *   close(): Promise<void>,
  * }>}
@@ -147,6 +148,16 @@ async function createSqliteStorage(file) {
         throw error;
       }
       return result;
+    },
+    // One-time fix: the rows of one card or account belong to another user (doc.userCode).
+    // Returns the number of changed rows.
+    async reassignUser({ company, account, user }) {
+      const result = db.prepare(
+        `UPDATE transactions SET doc = json_set(doc, '$.userCode', ?), updated_at = ?
+         WHERE json_extract(doc, '$.companyId') = ? AND CAST(json_extract(doc, '$.accountNumber') AS TEXT) = ?
+           AND json_extract(doc, '$.userCode') IS NOT ?`,
+      ).run(user, new Date().toISOString(), company, String(account), user);
+      return Number(result.changes);
     },
     // A consistent copy of the whole database (for analysis outside the add-on).
     async exportTo(target) {

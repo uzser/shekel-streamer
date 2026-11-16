@@ -1,5 +1,5 @@
 name: Shekel Streamer
-version: "2.6.0"
+version: "2.7.0"
 slug: shekel_streamer
 description: Israeli bank and card transactions to Telegram. One run per start; start it daily from an automation.
 url: https://github.com/uzser/shekel-streamer

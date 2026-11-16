@@ -107,6 +107,30 @@ test('sqlite: exportTo writes a full copy and replaces an old one', async () => 
   copy.close();
 });
 
+test('sqlite: reassignUser changes only the rows of that company and account', async () => {
+  const storage = await tempStorage();
+  const cal = { companyId: 'visaCal', userCode: 'SERGEI', translatedDescription: 'x' };
+  await storage.saveOrUpdate(txn({ ...cal, accountNumber: '6422' }));
+  await storage.saveOrUpdate(txn({ ...cal, accountNumber: '6422', description: 'מוביט' }));
+  await storage.saveOrUpdate(txn({ ...cal, accountNumber: '0228', description: 'other card' }));
+  await storage.saveOrUpdate(txn({ ...cal, companyId: 'isracard', accountNumber: '6422', description: 'other company' }));
+
+  const fix = { company: 'visaCal', account: '6422', user: 'ALEX' };
+  assert.equal(await storage.reassignUser(fix), 2);
+  assert.equal(await storage.reassignUser(fix), 0); // nothing left to change
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shekel-reassign-')), 'copy.sqlite');
+  await storage.exportTo(file);
+  await storage.close();
+
+  const { DatabaseSync } = await import('node:sqlite');
+  const copy = new DatabaseSync(file, { readOnly: true });
+  const users = copy.prepare(
+    "SELECT json_extract(doc, '$.companyId') AS c, json_extract(doc, '$.accountNumber') AS a, json_extract(doc, '$.userCode') AS u FROM transactions ORDER BY c, a, u",
+  ).all().map(r => `${r.c}/${r.a}/${r.u}`);
+  assert.deepEqual(users, ['isracard/6422/SERGEI', 'visaCal/0228/SERGEI', 'visaCal/6422/ALEX', 'visaCal/6422/ALEX']);
+  copy.close();
+});
+
 test('telegram: HTML escaping', () => {
   assert.equal(escapeHtml('A&B <b>*_x_*</b>'), 'A&amp;B &lt;b&gt;*_x_*&lt;/b&gt;');
   assert.equal(escapeHtml(undefined), '');

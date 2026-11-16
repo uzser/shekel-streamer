@@ -78,6 +78,26 @@ if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {
   }
 }
 
+// One-time owner fix (SQLite only): {"company": "visaCal", "account": "6422", "user": "ALEX"}
+// sets the user of all stored rows of that card or account. The file is deleted after success.
+const REASSIGN_FILE = cfg('REASSIGN_FILE');
+if (REASSIGN_FILE && fs.existsSync(REASSIGN_FILE)) {
+  try {
+    const { company, account, user } = JSON.parse(fs.readFileSync(REASSIGN_FILE, 'utf8'));
+    if (![company, account, user].every(v => typeof v === 'string' && v) || !/^[A-Za-z0-9_-]+$/.test(user)) {
+      throw new Error('"company", "account" and "user" must be strings; "user" like in the accounts option');
+    }
+    if (!storage.reassignUser) {
+      throw new Error('reassign needs the SQLite storage');
+    }
+    const changed = await storage.reassignUser({ company, account, user });
+    fs.unlinkSync(REASSIGN_FILE);
+    logger.info('Reassign finished.', { company, account, user, changed });
+  } catch (error) {
+    logger.error('Reassign failed. The file stays for the next run.', { errorMessage: error.message });
+  }
+}
+
 // One-time backfill (SQLite only): {"from": "YYYY-MM-DD", "dryRun": false, "accounts": [...]}.
 // The sync starts at "from"; new rows older than the normal sync window are stored without a
 // Telegram post. "accounts" (optional): task keys such as "SERGEI_visaCal"; other accounts do a
