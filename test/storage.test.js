@@ -131,6 +131,90 @@ test('sqlite: reassignUser changes only the rows of that company and account', a
   copy.close();
 });
 
+// Card purchase abroad: pending in the original currency, completed in USD (same day, same merchant).
+const abroad = {
+  accountNumber: '0228', companyId: 'visaCal', userCode: 'SERGEI', translatedDescription: 'Cafe',
+  date: new Date('2026-11-01T22:00:00.000Z'), description: 'CAFE UBUD',
+  originalAmount: -1000000, originalCurrency: 'IDR',
+};
+
+async function rows(storage) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shekel-rows-')), 'copy.sqlite');
+  await storage.exportTo(file);
+  const { DatabaseSync } = await import('node:sqlite');
+  const copy = new DatabaseSync(file, { readOnly: true });
+  const result = copy.prepare('SELECT status, charged_amount AS amount, description FROM transactions ORDER BY id').all()
+    .map(r => `${r.status}|${r.amount}|${r.description}`);
+  copy.close();
+  return result;
+}
+
+test('sqlite: the completed row of a purchase abroad replaces its pending row (no new row)', async () => {
+  const storage = await tempStorage();
+  assert.equal(await storage.saveOrUpdate({ ...abroad, status: 'pending', chargedAmount: -1000000,
+    processedDate: abroad.date }), true);
+  assert.equal(await storage.saveOrUpdate({ ...abroad, status: 'completed', chargedAmount: -60.5, chargedCurrency: 'USD',
+    processedDate: new Date('2026-12-10T00:00:00.000Z') }), false);
+  assert.deepEqual(await rows(storage), ['completed|-60.5|CAFE UBUD']);
+  await storage.close();
+});
+
+test('sqlite: a bank row completed with another description and day replaces its pending row', async () => {
+  const storage = await tempStorage();
+  const salary = { accountNumber: '12-345', companyId: 'hapoalim', originalAmount: 9000, originalCurrency: 'ILS',
+    chargedAmount: 9000, translatedDescription: 'Salary' };
+  await storage.saveOrUpdate({ ...salary, status: 'pending', description: 'משכורת', date: new Date('2024-03-09T22:00:00.000Z'),
+    processedDate: new Date('2024-03-09T22:00:00.000Z') });
+  assert.equal(await storage.saveOrUpdate({ ...salary, status: 'completed', description: 'משכורת חברה',
+    date: new Date('2024-03-10T22:00:00.000Z'), processedDate: new Date('2024-03-10T22:00:00.000Z') }), false);
+  assert.deepEqual(await rows(storage), ['completed|9000|משכורת חברה']);
+  await storage.close();
+});
+
+test('sqlite: same merchant and amount on another day is a new purchase, other account too', async () => {
+  const storage = await tempStorage();
+  await storage.saveOrUpdate({ ...abroad, status: 'pending', chargedAmount: -1000000, processedDate: abroad.date });
+  const nextDay = new Date('2026-11-02T22:00:00.000Z');
+  assert.equal(await storage.saveOrUpdate({ ...abroad, status: 'completed', chargedAmount: -60.5, date: nextDay,
+    processedDate: nextDay }), true);
+  assert.equal(await storage.saveOrUpdate({ ...abroad, accountNumber: '6422', status: 'completed', chargedAmount: -60.4,
+    processedDate: nextDay }), true);
+  assert.equal((await rows(storage)).length, 3);
+  await storage.close();
+});
+
+test('sqlite: removePendingDuplicates removes old pending rows that have a completed row, once', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shekel-dedupe-'));
+  const file = path.join(dir, 'old.db');
+  let storage = await createStorage({ sqlitePath: file });
+  const iso = d => new Date(d).toISOString();
+  const doc = (t) => ({ ...abroad, ...t, date: iso(t.date ?? abroad.date), processedDate: iso(t.date ?? abroad.date) });
+  // An old database: the old app stored both rows (history import keeps them as they are).
+  await storage.importHistory({
+    format: 'shekel-streamer-history-v1',
+    transactions: [
+      doc({ status: 'pending', chargedAmount: -1000000 }),
+      doc({ status: 'completed', chargedAmount: -60.5 }),
+      doc({ status: 'pending', chargedAmount: -5, originalAmount: -5, originalCurrency: 'ILS', description: 'NO TWIN' }),
+    ],
+  });
+  await storage.close();
+  const { DatabaseSync } = await import('node:sqlite');
+  const raw = new DatabaseSync(file);
+  raw.exec('PRAGMA user_version = 0'); // as before this version
+  raw.close();
+
+  storage = await createStorage({ sqlitePath: file });
+  assert.equal(await storage.removePendingDuplicates(), 1);
+  assert.deepEqual(await rows(storage), ['completed|-60.5|CAFE UBUD', 'pending|-5|NO TWIN']);
+  // Done once: the database version is set, the next start changes nothing.
+  await storage.importHistory({ format: 'shekel-streamer-history-v1', transactions: [
+    doc({ status: 'pending', chargedAmount: -1000000, description: 'CAFE UBUD' })] });
+  assert.equal(await storage.removePendingDuplicates(), 0);
+  assert.equal((await rows(storage)).length, 3);
+  await storage.close();
+});
+
 test('telegram: HTML escaping', () => {
   assert.equal(escapeHtml('A&B <b>*_x_*</b>'), 'A&amp;B &lt;b&gt;*_x_*&lt;/b&gt;');
   assert.equal(escapeHtml(undefined), '');

@@ -67,6 +67,16 @@ try {
   process.exit(1);
 }
 
+// One-time cleanup (SQLite): old pending rows whose completed row is stored as another row.
+try {
+  const removed = await storage.removePendingDuplicates?.();
+  if (removed) {
+    logger.info('Duplicate pending rows removed.', { removed });
+  }
+} catch (error) {
+  logger.error('Duplicate cleanup failed.', { errorMessage: error.message });
+}
+
 // One-time history import (SQLite only). The file is deleted after a successful import.
 const IMPORT_FILE = cfg('IMPORT_FILE');
 if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {

@@ -29,6 +29,7 @@ export function transactionKey(t) {
  *   hasNear?(transaction: any): Promise<boolean>,
  *   reassignUser?(fix: {company: string, account: string, user: string}): Promise<number>,
  *   exportTo?(file: string): Promise<void>,
+ *   removePendingDuplicates?(): Promise<number>,
  *   close(): Promise<void>,
  * }>}
  */
@@ -79,10 +80,35 @@ async function createSqliteStorage(file) {
     'SELECT 1 FROM transactions WHERE charged_amount = ? AND description = ? AND date > ? AND date < ? LIMIT 1',
   );
 
+  const replaceTxn = db.prepare(
+    `UPDATE transactions SET date = ?, charged_amount = ?, description = ?, processed_date = ?, status = ?,
+       translated_description = ?, doc = ?, updated_at = ? WHERE id = ?`,
+  );
+  const deleteTxn = db.prepare('DELETE FROM transactions WHERE id = ?');
+  // The pending and the completed row of one transaction: same company, account and original
+  // amount, at most 3 days apart. The completed row can have another amount (a purchase abroad:
+  // the original currency → USD/EUR), another description or another day (bank rows). Same
+  // description on another day = another purchase (e.g. a coffee every day).
+  const findTwins = db.prepare(
+    `SELECT id FROM transactions
+     WHERE status = ? AND json_extract(doc, '$.companyId') IS ?
+       AND CAST(json_extract(doc, '$.accountNumber') AS TEXT) IS ?
+       AND json_extract(doc, '$.originalCurrency') IS ? AND abs(json_extract(doc, '$.originalAmount') - ?) < 0.005
+       AND date BETWEEN ? AND ? AND (description != ? OR abs(julianday(date) - julianday(?)) < 0.5)
+     ORDER BY description = ? DESC, abs(julianday(date) - julianday(?)), id`,
+  );
+
   const iso = d => new Date(d).toISOString();
   // Old rows can have the same transaction at a date some hours off: the old image ran in UTC,
   // this one in Asia/Jerusalem (bank dates are midnight local time).
   const NEAR_MS = 12 * 60 * 60 * 1000;
+  const TWIN_MS = 3 * 24 * 60 * 60 * 1000;
+  const twinsOf = (status, t) => {
+    const ms = new Date(t.date).getTime();
+    return findTwins.all(status, t.companyId ?? null, t.accountNumber == null ? null : String(t.accountNumber),
+      t.originalCurrency ?? null, t.originalAmount ?? null, iso(ms - TWIN_MS), iso(ms + TWIN_MS),
+      t.description, iso(t.date), t.description, iso(t.date));
+  };
 
   return {
     async check() {
@@ -115,6 +141,14 @@ async function createSqliteStorage(file) {
       const row = findTxn.get(iso(t.date), t.chargedAmount, t.description);
       if (row) {
         updateTxn.run(iso(t.processedDate), t.status, t.translatedDescription ?? null, JSON.stringify(t), now, row.id);
+        return false;
+      }
+      // The pending row of this transaction is stored with another amount, description or day:
+      // it becomes this completed row (no second row, no second post).
+      const twin = t.status === 'completed' && t.originalAmount != null ? twinsOf('pending', t)[0] : undefined;
+      if (twin) {
+        replaceTxn.run(iso(t.date), t.chargedAmount, t.description, iso(t.processedDate), t.status,
+          t.translatedDescription ?? null, JSON.stringify(t), now, twin.id);
         return false;
       }
       insertTxn.run(iso(t.date), t.chargedAmount, t.description, iso(t.processedDate), t.status,
@@ -158,6 +192,33 @@ async function createSqliteStorage(file) {
            AND json_extract(doc, '$.userCode') IS NOT ?`,
       ).run(user, new Date().toISOString(), company, String(account), user);
       return Number(result.changes);
+    },
+    // One-time cleanup (database version 1): pending rows whose completed row is stored as another
+    // row (old app, history import). Each completed row takes one pending row. Returns the count.
+    async removePendingDuplicates() {
+      if (db.prepare('PRAGMA user_version').get().user_version >= 1) {
+        return 0;
+      }
+      const used = new Set();
+      let removed = 0;
+      db.exec('BEGIN');
+      try {
+        for (const p of db.prepare("SELECT id, date, description, doc FROM transactions WHERE status = 'pending' ORDER BY date, id").all()) {
+          const twin = twinsOf('completed', { ...JSON.parse(p.doc), date: p.date, description: p.description })
+            .find(c => !used.has(c.id));
+          if (twin) {
+            used.add(twin.id);
+            deleteTxn.run(p.id);
+            removed++;
+          }
+        }
+        db.exec('PRAGMA user_version = 1');
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      return removed;
     },
     // A consistent copy of the whole database (for analysis outside the add-on).
     async exportTo(target) {

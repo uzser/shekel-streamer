@@ -37,6 +37,14 @@ On a new device Bank Hapoalim asks for an SMS code. The bot writes to your priva
 with the code within `otp_timeout_minutes` (default 10). The browser profile in `/data/profiles`
 keeps the device known, so the bank asks again only when that trust expires.
 
+## Pending and completed rows
+
+A bank or card first gives a transaction as pending, later as completed. The add-on keeps one
+row: the completed row replaces the pending row, also when it has another amount (a card
+purchase abroad: the original currency, then USD or EUR), another description or another day
+(bank rows), and Telegram gets one post. Version 2.9.0 removes old duplicate pending rows once
+(log line "Duplicate pending rows removed.").
+
 ## Import an old history
 
 Put `history-import.json` (format `shekel-streamer-history-v1`: `transactions` = the documents
