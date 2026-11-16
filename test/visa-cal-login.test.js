@@ -1,12 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import moment from 'moment';
 import visaCalModule from 'israeli-bank-scrapers/lib/scrapers/visa-cal.js';
 import fetchModule from 'israeli-bank-scrapers/lib/helpers/fetch.js';
 
 import { VisaCalLoginScraper, isOtpLogin } from '../src/visa-cal-login.js';
+import { calAppLogin, hashFile } from '../src/visa-cal-app.js';
 import { redactScraperError } from '../src/redact.js';
 
 const VisaCalScraper = visaCalModule.default ?? visaCalModule;
@@ -171,92 +175,122 @@ test('visaCal: no login form after 3 clicks is an error', async () => {
   assert.equal(clicks.length, 3);
 });
 
-// A fake page for the SMS login: the code field shows after the first click on the submit button.
-function fakeOtpPage() {
-  const events = [];
-  const frame = {
-    url: () => 'https://connect.cal-online.co.il/send-otp',
-    waitForSelector: async () => {},
-    $eval: async selector => { events.push(`click ${selector}`); },
-    type: async (selector, value) => { events.push(`type ${selector} ${value}`); },
-    $: async selector => (selector === '[formcontrolname="otp"]' && !events.some(e => e.startsWith('click button'))
-      ? null : { isVisible: async () => true }),
-    evaluate: async () => '',
+// A fake Cal app API. `validHashes`: the hashes that bioLogin accepts. Each login gives a new hash.
+function fakeCalApi(validHashes = []) {
+  const calls = [];
+  let n = 0;
+  const answer = (statusCode, result = null) => ({ status: 200, json: async () => ({ statusCode, statusDescription: 'text', result }) });
+  const session = () => ({ calConnectToken: ' token ', temporaryGuid: 'guid', hash: `new${++n}` });
+  const fetch = async (url, { method, headers, body }) => {
+    const path = url.replace('https://api-cc.cal-online.co.il/Authentication/api/', '');
+    const data = JSON.parse(body);
+    calls.push({ method, path, data, authorization: headers.Authorization });
+    if (path === 'login/bioLogin') return validHashes.includes(data.hash) ? answer(1, session()) : answer(6);
+    if (path === 'login/sendOTP') return data.last4Digits === '1234' ? answer(1, { token: 'otp-token' }) : answer(4);
+    if (path === 'login/verifyOTP') return data.password === '123456' ? answer(1, session()) : answer(5);
+    if (path === 'account/init') {
+      return answer(1, { user: { name: 'private' }, cards: [{ cardUniqueId: 'c1', last4Digits: '1234', owner: 'private' }] });
+    }
+    throw new Error(`unexpected ${path}`);
   };
-  const page = {
-    waitForSelector: async () => {},
-    waitForRequest: () => new Promise(() => {}),
-    on: (name) => events.push(`on ${name}`),
-    $eval: async () => {},
-    frames: () => [frame],
-  };
-  return { page, frame, events };
+  return { fetch, calls };
 }
+
+function memoryStore(hashes = {}) {
+  const store = { hashes, writes: 0, read: () => store.hashes, write: h => { store.hashes = h; store.writes++; } };
+  return store;
+}
+
+const CAL_ID = { id: '18', last4Digits: '1234' };
 
 test('visaCal: id + last4Digits is the SMS login, user name + password is not', () => {
   assert.equal(isOtpLogin({ id: '1', last4Digits: '1234' }), true);
   assert.equal(isOtpLogin({ username: 'u', password: 'p' }), false);
   assert.equal(isOtpLogin({ id: '1' }), false);
-
-  const { page } = fakeOtpPage();
-  const s = scraper(page);
-  const otp = s.getLoginOptions({ id: '000000018', last4Digits: '1234' });
-  assert.deepEqual(otp.fields, [
-    { selector: '[formcontrolname="id"]', value: '000000018' },
-    { selector: '[formcontrolname="secondOtpParam"]', value: '1234' },
-  ]);
-  assert.equal(typeof otp.submitButtonSelector, 'function');
-  const password = s.getLoginOptions({ username: 'u', password: 'p' });
-  assert.equal(password.fields[0].selector, '[formcontrolname="userName"]');
-  assert.equal(password.submitButtonSelector, 'button[type="submit"]');
 });
 
-test('visaCal: SMS login sends the code request, types the code from the retriever, submits', async () => {
-  const { page, events } = fakeOtpPage();
+test('visaCal app: no stored hash = SMS login, the hash is stored, cards have 2 fields only', async () => {
+  const { fetch, calls } = fakeCalApi();
+  const store = memoryStore();
   const asked = [];
-  const s = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async info => {
-    asked.push(info);
-    return ' 123456 ';
-  });
-  s.page = page;
-  s.retryPauseMs = 5;
-
-  await s.submitOtp();
+  const result = await calAppLogin(CAL_ID, store, async info => { asked.push(info); return ' 123456 '; }, fetch);
 
   assert.deepEqual(asked, [{ attempt: 1 }]);
-  assert.deepEqual(events, [
-    'click button[type="submit"]',
-    'click [formcontrolname="otp"]',
-    'type [formcontrolname="otp"] 123456',
-    'on response',
-    'click button[type="submit"]',
-  ]);
+  assert.deepEqual(calls.map(c => `${c.method} ${c.path}`),
+    ['PUT login/sendOTP', 'POST login/verifyOTP', 'POST account/init']);
+  assert.deepEqual(calls[0].data, { custExtId: '000000018', last4Digits: '1234', smsByVoice: false });
+  assert.equal(calls[1].data.token, 'otp-token');
+  assert.equal(calls[1].data.password, '123456');
+  assert.match(calls[1].data.uuid, /^[0-9a-f]{32}$/);
+  assert.deepEqual(calls[2], { method: 'POST', path: 'account/init', data: { tokenGuid: 'guid' }, authorization: 'CALAuthScheme token' });
+  assert.deepEqual(result, { authorization: 'CALAuthScheme token', cards: [{ cardUniqueId: 'c1', last4Digits: '1234' }], method: 'sms' });
+  assert.deepEqual(store.hashes, { hash: 'new1', previous: undefined });
 });
 
-test('visaCal: SMS login with no code or no code field is an error', async () => {
-  const noCode = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async () => null);
-  noCode.page = fakeOtpPage().page;
-  noCode.retryPauseMs = 5;
-  await assert.rejects(noCode.submitOtp(), /no SMS code$/);
+test('visaCal app: a stored hash logs in with no SMS, the new hash replaces it', async () => {
+  const { fetch, calls } = fakeCalApi(['h1']);
+  const store = memoryStore({ hash: 'h1' });
+  const result = await calAppLogin(CAL_ID, store, async () => assert.fail('no SMS'), fetch);
 
-  const { page, frame } = fakeOtpPage();
-  frame.$ = async () => null;
-  const noField = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, async () => '1');
-  noField.page = page;
-  noField.retryPauseMs = 5;
-  noField.otpFormTimeoutMs = 30;
-  await assert.rejects(noField.submitOtp(), /no SMS code field/);
+  assert.equal(result.method, 'hash');
+  assert.deepEqual(calls.map(c => c.path), ['login/bioLogin', 'account/init']);
+  assert.deepEqual(store.hashes, { hash: 'new1', previous: 'h1' });
 });
 
-test('visaCal: login responses keep the paths and result keys, the hash goes to loginHash', async () => {
-  const s = scraper(fakeOtpPage().page);
-  const response = (url, json) => ({ url: () => url, json: async () => json });
-  await s.readLoginResponse(response('https://api.cal-online.co.il/Authentication/api/login/verifyOTP',
-    { result: { calConnectToken: 't', hash: 'h' } }));
-  await s.readLoginResponse(response('https://api.cal-online.co.il/Transactions/api/x', { result: { a: 1 } }));
-  await s.readLoginResponse(response('https://evil.example/login', { result: { hash: 'x' } }));
-  assert.deepEqual(s.loginInfo, [{ path: '/Authentication/api/login/verifyOTP', keys: ['calConnectToken', 'hash'] }]);
-  assert.equal(s.loginHash, 'h');
+test('visaCal app: a refused hash tries the previous hash, then the SMS login', async () => {
+  const previous = fakeCalApi(['h0']);
+  const store = memoryStore({ hash: 'h1', previous: 'h0' });
+  assert.equal((await calAppLogin(CAL_ID, store, async () => assert.fail('no SMS'), previous.fetch)).method, 'hash');
+  assert.deepEqual(previous.calls.map(c => c.data.hash).slice(0, 2), ['h1', 'h0']);
+  assert.equal(store.hashes.hash, 'new1');
+
+  const none = fakeCalApi();
+  const stale = memoryStore({ hash: 'h1', previous: 'h0' });
+  assert.equal((await calAppLogin(CAL_ID, stale, async () => '123456', none.fetch)).method, 'sms');
+  assert.deepEqual(stale.hashes, { hash: 'new1', previous: undefined });
+});
+
+test('visaCal app: errors have the step and no secret, the stored hash stays', async () => {
+  const { fetch } = fakeCalApi();
+  const store = memoryStore();
+  await assert.rejects(calAppLogin({ id: '18', last4Digits: '9999' }, store, async () => '123456', fetch),
+    /the SMS request failed: text \(status 4\)$/);
+  await assert.rejects(calAppLogin(CAL_ID, store, async () => null, fetch), /no SMS code$/);
+  await assert.rejects(calAppLogin(CAL_ID, store, async () => '000000', fetch), /the SMS code failed: text \(status 5\)$/);
+  assert.equal(store.writes, 0);
+});
+
+test('visaCal app: hashFile keeps the hashes in a private file', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cal-hash-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  const file = path.join(dir, 'ALEX_visaCal.cal-hash');
+  const store = hashFile(file);
+  assert.deepEqual(store.read(), {});
+  store.write({ hash: 'a', previous: 'b' });
+  assert.deepEqual(hashFile(file).read(), { hash: 'a', previous: 'b' });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(dir), ['ALEX_visaCal.cal-hash']);
+});
+
+test('visaCal: the scraper with id + last4Digits logs in by the app API and fetches with its token and cards', async t => {
+  const { fetch } = fakeCalApi(['h1']);
+  t.mock.method(globalThis, 'fetch', fetch);
+  const seen = {};
+  t.mock.method(VisaCalScraper.prototype, 'fetchData', async function () {
+    seen.cards = await this.getCards();
+    seen.authorization = await this.getAuthorizationHeader();
+    return { success: true, accounts: [] };
+  });
+  const store = memoryStore({ hash: 'h1' });
+  const s = new VisaCalLoginScraper({ companyId: 'visaCal', startDate: new Date() }, null, store);
+  s.requestPauseMs = 0;
+
+  assert.deepEqual(await s.login(CAL_ID), { success: true });
+  await s.fetchData();
+
+  assert.equal(s.loginMethod, 'hash');
+  assert.deepEqual(seen, { cards: [{ cardUniqueId: 'c1', last4Digits: '1234' }], authorization: 'CALAuthScheme token' });
+  assert.equal(store.hashes.hash, 'new1');
 });
 
 test('redact: the request body of a scraper error is removed', () => {

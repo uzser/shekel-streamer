@@ -12,6 +12,7 @@ import { createStorage, transactionKey } from './storage.js';
 import { sendMessage, askForCode, escapeHtml } from './telegram.js';
 import { HapoalimOtpScraper } from './hapoalim-otp.js';
 import { VisaCalLoginScraper, isOtpLogin } from './visa-cal-login.js';
+import { hashFile } from './visa-cal-app.js';
 import { redactScraperError } from './redact.js';
 import { toStoredTransaction } from './stored-transaction.js';
 
@@ -551,17 +552,14 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
     const scraper = companyId === CompanyTypes.hapoalim
       ? new HapoalimOtpScraper(scraperOptions, createOtpCodeRetriever(taskKey))
       : companyId === CompanyTypes.visaCal
-        ? new VisaCalLoginScraper(scraperOptions, createOtpCodeRetriever(taskKey))
+        // The hash of the Cal app login (no SMS). A secret: same protection as the browser profile.
+        ? new VisaCalLoginScraper(scraperOptions, createOtpCodeRetriever(taskKey),
+          BROWSER_PROFILES_DIR ? hashFile(path.join(BROWSER_PROFILES_DIR, `${taskKey}.cal-hash`)) : undefined)
         : createScraper(scraperOptions);
 
     syncResult = await scraper.scrape(credentials);
-    if (scraper.loginInfo?.length) {
-      // Cal SMS login: paths and result keys only, no values.
-      logger.info('Cal login responses.', { taskKey, responses: scraper.loginInfo, hash: Boolean(scraper.loginHash) });
-    }
-    if (scraper.loginHash && BROWSER_PROFILES_DIR) {
-      // A login token of the Cal app (no SMS). A secret: same protection as the browser profile.
-      fs.writeFileSync(path.join(BROWSER_PROFILES_DIR, `${taskKey}.cal-hash`), scraper.loginHash, { mode: 0o600 });
+    if (scraper.loginMethod) {
+      logger.info('Cal app login.', { taskKey, method: scraper.loginMethod });
     }
     if (scraper.historyNote) {
       logger.info('History limit.', { taskKey, note: redactScraperError(scraper.historyNote).slice(0, 300) });
