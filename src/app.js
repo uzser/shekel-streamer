@@ -505,6 +505,9 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
         : createScraper(scraperOptions);
 
     syncResult = await scraper.scrape(credentials);
+    if (scraper.historyNote) {
+      logger.info('History limit.', { taskKey, note: redactScraperError(scraper.historyNote).slice(0, 300) });
+    }
   } finally {
     await browser.close().catch(() => {});
   }
