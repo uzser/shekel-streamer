@@ -27,8 +27,12 @@ test('hapoalim: a start date more than one month back is fetched month by month'
   const today = moment();
   const startDate = today.clone().subtract(2, 'months').subtract(10, 'days').toDate();
   const scraper = new HapoalimOtpScraper({ startDate, companyId: 'hapoalim' });
+  scraper.windowPauseMs = 30;
 
+  const started = Date.now();
   const result = await scraper.fetchData();
+
+  assert.ok(Date.now() - started >= 60, 'a pause before the 2nd and the 3rd request');
 
   const back = n => today.clone().subtract(n, 'months');
   assert.deepEqual(windows, [

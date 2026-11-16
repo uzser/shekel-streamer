@@ -72,6 +72,8 @@ export class HapoalimOtpScraper extends HapoalimScraper {
   constructor(options, otpCodeRetriever) {
     super(options);
     this.otpCodeRetriever = otpCodeRetriever;
+    // Pause between the month requests of a long fetch.
+    this.windowPauseMs = 10000;
   }
 
   getLoginOptions(credentials) {
@@ -100,7 +102,11 @@ export class HapoalimOtpScraper extends HapoalimScraper {
     const accounts = new Map();
     try {
       // Windows from the newest: [end - 1 month + 1 day, end], the oldest one starts at startDate.
-      for (let end = moment(); end.isAfter(startDate); end = end.clone().subtract(1, 'months')) {
+      for (let end = moment(), i = 0; end.isAfter(startDate); end = end.clone().subtract(1, 'months'), i++) {
+        if (i > 0) {
+          // Without a pause the bank answered with an HTML block page (2026-11-16).
+          await sleep(this.windowPauseMs);
+        }
         const endMs = end.valueOf();
         moment.now = () => endMs;
         const windowStart = moment.max(moment(startDate), end.clone().subtract(1, 'months').add(1, 'days'));

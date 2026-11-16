@@ -78,12 +78,15 @@ if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {
 
 // One-time backfill (SQLite only): {"from": "YYYY-MM-DD", "dryRun": false}. The sync starts at
 // "from"; new rows older than the normal sync window are stored without a Telegram post.
-// A dry run only logs counts by month. The file is deleted after a successful run.
+// A dry run only logs counts by month. The file is used once: it is deleted at the start, so a
+// failed backfill does not repeat in the daily run (many bank requests).
 const BACKFILL_FILE = cfg('BACKFILL_FILE');
 let backfill = null;
 if (BACKFILL_FILE && fs.existsSync(BACKFILL_FILE)) {
   try {
-    const { from, dryRun } = JSON.parse(fs.readFileSync(BACKFILL_FILE, 'utf8'));
+    const text = fs.readFileSync(BACKFILL_FILE, 'utf8');
+    fs.unlinkSync(BACKFILL_FILE);
+    const { from, dryRun } = JSON.parse(text);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
       throw new Error('"from" must be a date YYYY-MM-DD');
     }
@@ -93,7 +96,7 @@ if (BACKFILL_FILE && fs.existsSync(BACKFILL_FILE)) {
     backfill = { from: DateTime.fromISO(from, { zone: DEFAULT_TIMEZONE }).toJSDate(), dryRun: dryRun === true };
     logger.info('Backfill run.', { from, dryRun: backfill.dryRun });
   } catch (error) {
-    logger.error('Backfill file is not valid. Normal sync.', { errorMessage: error.message });
+    logger.error('Backfill file is not valid (deleted). Normal sync.', { errorMessage: error.message });
   }
 }
 
@@ -832,8 +835,7 @@ async function processTransactionSyncTasks(transactionSyncTasks) {
   }
 
   if (backfill) {
-    fs.unlinkSync(BACKFILL_FILE);
-    logger.info('Backfill finished. The file is deleted.', { dryRun: backfill.dryRun });
+    logger.info('Backfill finished.', { dryRun: backfill.dryRun });
     backfill = null;
   }
 

@@ -51,14 +51,14 @@ Put `backfill.json` into the same folder and start the add-on:
 { "from": "2025-01-01", "dryRun": true }
 ```
 
-- The sync starts at `from`. Bank Hapoalim: the add-on asks month by month (the bank returns
-  at most 150 rows per request) and gives data for about 3 years back.
+- The sync starts at `from`. Bank Hapoalim: the add-on asks month by month with a 10 s pause
+  (the bank returns at most 150 rows per request and blocks fast requests). The bank gives data
+  for about 3 years back.
 - Rows that are already in the database stay as they are (also when the date is some hours off,
   as in an old history).
 - New rows older than `sync_days_count` days are stored without a Telegram post.
 - `dryRun: true` only logs the counts by month (found, missing).
-- The file is deleted after a successful run. After a failed run it stays, and the next start
-  tries again.
+- The file is used once: the add-on deletes it at the start. To try again, put it there again.
 
 ## Security model
 
