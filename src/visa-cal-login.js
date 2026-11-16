@@ -1,12 +1,16 @@
-// Visa Cal scraper with a fix for the new login popup.
+// Visa Cal scraper with a fix for the new login popup and a pause between API requests.
 //
 // Since 2026-10 Cal shows some users a new login popup (it looks like an A/B test): the user name
 // tab is an Angular tab link, and the old `#regular-login` element is not there. The upstream
 // scraper (israeli-bank-scrapers 6.13) waits for `#regular-login` and times out.
 // The selectors and the retry come from upstream PR #1212 (not merged).
+//
+// The upstream scraper asks for the months one after the other without a pause (cards in
+// parallel). Here the Cal API requests go one at a time, with a pause before each one.
 
 import visaCalModule from 'israeli-bank-scrapers/lib/scrapers/visa-cal.js';
 import elements from 'israeli-bank-scrapers/lib/helpers/elements-interactions.js';
+import fetchModule from 'israeli-bank-scrapers/lib/helpers/fetch.js';
 
 const VisaCalScraper = visaCalModule.default ?? visaCalModule;
 const { waitUntilElementFound, clickButton } = elements;
@@ -45,8 +49,26 @@ export class VisaCalLoginScraper extends VisaCalScraper {
     super(options);
     this.formTimeoutMs = 5000;
     this.retryPauseMs = 250;
+    this.requestPauseMs = 3000;
     // openLoginPopup is a class field of the upstream scraper: replace it after super().
     this.openLoginPopup = () => this.openLoginPopupAnyMarkup();
+  }
+
+  // The upstream scraper calls fetchPost of the library fetch module (read at each call), so a
+  // wrapper on that module puts its requests in one queue.
+  async fetchData() {
+    const realFetchPost = fetchModule.fetchPost;
+    let queue = Promise.resolve();
+    fetchModule.fetchPost = (...args) => {
+      const result = queue.then(() => sleep(this.requestPauseMs)).then(() => realFetchPost(...args));
+      queue = result.catch(() => {});
+      return result;
+    };
+    try {
+      return await super.fetchData();
+    } finally {
+      fetchModule.fetchPost = realFetchPost;
+    }
   }
 
   async openLoginPopupAnyMarkup() {

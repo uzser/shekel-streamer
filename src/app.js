@@ -78,25 +78,29 @@ if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {
   }
 }
 
-// One-time backfill (SQLite only): {"from": "YYYY-MM-DD", "dryRun": false}. The sync starts at
-// "from"; new rows older than the normal sync window are stored without a Telegram post.
-// A dry run only logs counts by month. The file is used once: it is deleted at the start, so a
-// failed backfill does not repeat in the daily run (many bank requests).
+// One-time backfill (SQLite only): {"from": "YYYY-MM-DD", "dryRun": false, "accounts": [...]}.
+// The sync starts at "from"; new rows older than the normal sync window are stored without a
+// Telegram post. "accounts" (optional): task keys such as "SERGEI_visaCal"; other accounts do a
+// normal sync. A dry run only logs counts by month. The file is used once: it is deleted at the
+// start, so a failed backfill does not repeat in the daily run (many bank requests).
 const BACKFILL_FILE = cfg('BACKFILL_FILE');
 let backfill = null;
 if (BACKFILL_FILE && fs.existsSync(BACKFILL_FILE)) {
   try {
     const text = fs.readFileSync(BACKFILL_FILE, 'utf8');
     fs.unlinkSync(BACKFILL_FILE);
-    const { from, dryRun } = JSON.parse(text);
+    const { from, dryRun, accounts } = JSON.parse(text);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
       throw new Error('"from" must be a date YYYY-MM-DD');
+    }
+    if (accounts !== undefined && !(Array.isArray(accounts) && accounts.every(a => typeof a === 'string'))) {
+      throw new Error('"accounts" must be a list of task keys, e.g. ["SERGEI_visaCal"]');
     }
     if (!storage.hasNear) {
       throw new Error('backfill needs the SQLite storage');
     }
-    backfill = { from: DateTime.fromISO(from, { zone: DEFAULT_TIMEZONE }).toJSDate(), dryRun: dryRun === true };
-    logger.info('Backfill run.', { from, dryRun: backfill.dryRun });
+    backfill = { from: DateTime.fromISO(from, { zone: DEFAULT_TIMEZONE }).toJSDate(), dryRun: dryRun === true, accounts };
+    logger.info('Backfill run.', { from, dryRun: backfill.dryRun, accounts: accounts || 'all' });
   } catch (error) {
     logger.error('Backfill file is not valid (deleted). Normal sync.', { errorMessage: error.message });
   }
@@ -476,7 +480,8 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   const daysCount = Number(cfg('SYNC_DAYS_COUNT')) || 7;
   const initialSyncDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
-  const startDate = backfill ? backfill.from : initialSyncDate;
+  const taskBackfill = backfill && (!backfill.accounts || backfill.accounts.includes(taskKey)) ? backfill : null;
+  const startDate = taskBackfill ? taskBackfill.from : initialSyncDate;
 
   logger.info(`Sync started...`, { taskKey, initialSyncDate: DateTime.fromJSDate(startDate).toISODate() });
 
@@ -548,7 +553,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   // Sort transactions by date from oldest to newest
   transactions.sort((a, b) => a.date - b.date)
 
-  if (backfill) {
+  if (taskBackfill) {
     // Rows that are in the database (also at a date some hours off) stay as they are.
     const months = {};
     const missing = [];
@@ -562,7 +567,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
       }
     }
     logger.info('Backfill: transactions by month', { taskKey, months });
-    if (backfill.dryRun) {
+    if (taskBackfill.dryRun) {
       return { success: true };
     }
     transactions = missing;
@@ -604,7 +609,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
       if (isNewTransaction) {
         counters.new++;
         // Backfill: post only the rows of the normal sync window.
-        if (!backfill || transaction.date >= initialSyncDate) {
+        if (!taskBackfill || transaction.date >= initialSyncDate) {
           await notify(transaction, chatId, taskKey);
         } else {
           counters.notPosted++;
@@ -616,7 +621,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   }
 
   logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`,
-    { taskKey, ...(backfill && { notPosted: counters.notPosted }) });
+    { taskKey, ...(taskBackfill && { notPosted: counters.notPosted }) });
   return { success: true };
 }
 

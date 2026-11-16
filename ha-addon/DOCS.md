@@ -50,12 +50,15 @@ nothing to Telegram and deletes the file.
 Put `backfill.json` into the same folder and start the add-on:
 
 ```json
-{ "from": "2025-01-01", "dryRun": true }
+{ "from": "2025-01-01", "dryRun": true, "accounts": ["SERGEI_visaCal"] }
 ```
 
+- `accounts` (optional): the accounts to backfill, as `<user_name>_<company>`. Other accounts do
+  a normal sync. Without `accounts`, all accounts are backfilled.
 - The sync starts at `from`. Bank Hapoalim: the add-on asks month by month with a 10 s pause
   (the bank returns at most 150 rows per request and blocks fast requests). The bank gives data
-  for about 3 years back.
+  for about 3 years back. Visa Cal: the scraper asks for at most 1.5 years back; the add-on
+  sends the Cal requests one at a time with a 3 s pause.
 - Rows that are already in the database stay as they are (also when the date is some hours off,
   as in an old history).
 - New rows older than `sync_days_count` days are stored without a Telegram post.
