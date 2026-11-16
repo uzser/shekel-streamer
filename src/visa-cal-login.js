@@ -150,7 +150,15 @@ export class VisaCalLoginScraper extends VisaCalScraper {
 
   async login(credentials) {
     if (!isOtpLogin(credentials)) {
-      return super.login(credentials);
+      try {
+        return await super.login(credentials);
+      } catch (error) {
+        // Where the browser was: host and path of the page and its frames, no query (no secrets).
+        const place = url => { try { const u = new URL(url); return u.host + u.pathname; } catch { return '?'; } };
+        const frames = this.page ? this.page.frames().slice(1).map(f => place(f.url())).join(', ') : '';
+        error.message += ` (page: ${this.page ? place(this.page.url()) : '?'}; frames: ${frames || 'none'})`;
+        throw error;
+      }
     }
     const { authorization, cards, method } = await calAppLogin(credentials, this.hashStore, this.otpCodeRetriever);
     this.authorization = authorization;
