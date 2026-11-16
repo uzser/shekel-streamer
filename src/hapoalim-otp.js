@@ -8,7 +8,12 @@
 // Device trust: run the scraper in a browser with a persistent profile (`userDataDir`). The
 // profile keeps the cookies and localStorage that mark the device as known, so the bank asks
 // for a code again only when that trust expires (about 30 days).
+//
+// History: the upstream scraper fetches at most one year back from "now" (moment()). For an
+// older start date, fetchData() gets one-year windows and moves moment's clock to the end of
+// each window.
 
+import moment from 'moment';
 import hapoalimModule from 'israeli-bank-scrapers/lib/scrapers/hapoalim.js';
 
 const HapoalimScraper = hapoalimModule.default ?? hapoalimModule;
@@ -80,6 +85,35 @@ export class HapoalimOtpScraper extends HapoalimScraper {
       );
     };
     return options;
+  }
+
+  async fetchData() {
+    const { startDate } = this.options;
+    if (!startDate || moment(startDate).isAfter(moment().subtract(1, 'years'))) {
+      return super.fetchData();
+    }
+    const realNow = moment.now;
+    const accounts = new Map();
+    try {
+      // Windows from the newest: [end - 1 year + 1 day, end], the oldest one starts at startDate.
+      for (let end = moment(); end.isAfter(startDate); end = end.clone().subtract(1, 'years')) {
+        const endMs = end.valueOf();
+        moment.now = () => endMs;
+        const result = await super.fetchData();
+        if (!result.success) {
+          return result;
+        }
+        for (const account of result.accounts) {
+          if (!accounts.has(account.accountNumber)) {
+            accounts.set(account.accountNumber, { ...account, txns: [] });
+          }
+          accounts.get(account.accountNumber).txns.push(...account.txns);
+        }
+      }
+    } finally {
+      moment.now = realNow;
+    }
+    return { success: true, accounts: [...accounts.values()] };
   }
 
   async login(credentials) {

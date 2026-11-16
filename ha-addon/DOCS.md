@@ -43,6 +43,23 @@ into the add-on config folder (`/addon_configs/<repository id>_shekel_streamer/`
 File editor) and start the add-on. It imports rows that are not in the database yet, sends
 nothing to Telegram and deletes the file.
 
+## Load older transactions (backfill)
+
+Put `backfill.json` into the same folder and start the add-on:
+
+```json
+{ "from": "2025-01-01", "dryRun": true }
+```
+
+- The sync starts at `from`. Bank Hapoalim: the add-on asks in one-year windows; the bank
+  decides how far back it gives data.
+- Rows that are already in the database stay as they are (also when the date is some hours off,
+  as in an old history).
+- New rows older than `sync_days_count` days are stored without a Telegram post.
+- `dryRun: true` only logs the counts by month (found, missing).
+- The file is deleted after a successful run. After a failed run it stays, and the next start
+  tries again.
+
 ## Security model
 
 - Secrets are add-on options (password fields). The app reads them from a tmpfs copy that it

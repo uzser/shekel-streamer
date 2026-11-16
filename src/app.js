@@ -76,6 +76,27 @@ if (IMPORT_FILE && fs.existsSync(IMPORT_FILE)) {
   }
 }
 
+// One-time backfill (SQLite only): {"from": "YYYY-MM-DD", "dryRun": false}. The sync starts at
+// "from"; new rows older than the normal sync window are stored without a Telegram post.
+// A dry run only logs counts by month. The file is deleted after a successful run.
+const BACKFILL_FILE = cfg('BACKFILL_FILE');
+let backfill = null;
+if (BACKFILL_FILE && fs.existsSync(BACKFILL_FILE)) {
+  try {
+    const { from, dryRun } = JSON.parse(fs.readFileSync(BACKFILL_FILE, 'utf8'));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      throw new Error('"from" must be a date YYYY-MM-DD');
+    }
+    if (!storage.hasNear) {
+      throw new Error('backfill needs the SQLite storage');
+    }
+    backfill = { from: DateTime.fromISO(from, { zone: DEFAULT_TIMEZONE }).toJSDate(), dryRun: dryRun === true };
+    logger.info('Backfill run.', { from, dryRun: backfill.dryRun });
+  } catch (error) {
+    logger.error('Backfill file is not valid. Normal sync.', { errorMessage: error.message });
+  }
+}
+
 await initializeSyncTasks();
 
 // End of main code
@@ -450,14 +471,16 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   const daysCount = Number(cfg('SYNC_DAYS_COUNT')) || 7;
   const initialSyncDate = new Date(new Date().setDate(new Date().getDate() - daysCount));
 
-  logger.info(`Sync started...`, { taskKey, initialSyncDate: DateTime.fromJSDate(initialSyncDate).toISODate() });
+  const startDate = backfill ? backfill.from : initialSyncDate;
+
+  logger.info(`Sync started...`, { taskKey, initialSyncDate: DateTime.fromJSDate(startDate).toISODate() });
 
   const browser = await launchBrowser(taskKey);
   let syncResult;
   try {
     const scraperOptions = {
       companyId: companyId,
-      startDate: initialSyncDate,
+      startDate,
       combineInstallments: false,
       browser,
       skipCloseBrowser: true,
@@ -518,6 +541,26 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
   // Sort transactions by date from oldest to newest
   transactions.sort((a, b) => a.date - b.date)
 
+  if (backfill) {
+    // Rows that are in the database (also at a date some hours off) stay as they are.
+    const months = {};
+    const missing = [];
+    for (const transaction of transactions) {
+      const month = DateTime.fromJSDate(transaction.date).setZone(DEFAULT_TIMEZONE).toFormat('yyyy-MM');
+      months[month] ??= { found: 0, missing: 0 };
+      months[month].found++;
+      if (!(await storage.hasNear(transaction))) {
+        months[month].missing++;
+        missing.push(transaction);
+      }
+    }
+    logger.info('Backfill: transactions by month', { taskKey, months });
+    if (backfill.dryRun) {
+      return { success: true };
+    }
+    transactions = missing;
+  }
+
   const existingTransactions = await storage.getExistingKeys(transactions);
   logger.debug(`Existing transactions found: ${existingTransactions.size}`, { taskKey });
 
@@ -528,7 +571,8 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
 
   let counters = {
     new: 0,
-    updated: 0
+    updated: 0,
+    notPosted: 0
   };
 
   const chunkSize = Number(cfg('GPT_TRANSLATION_COUNT')) || 30;
@@ -552,14 +596,20 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
       // Send notification only if transaction is new
       if (isNewTransaction) {
         counters.new++;
-        await notify(transaction, chatId, taskKey);
+        // Backfill: post only the rows of the normal sync window.
+        if (!backfill || transaction.date >= initialSyncDate) {
+          await notify(transaction, chatId, taskKey);
+        } else {
+          counters.notPosted++;
+        }
       } else {
         counters.updated++;
       }
     }
   }
 
-  logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`, { taskKey });
+  logger.info(`Sync finished. New: ${counters.new}, updated: ${counters.updated}`,
+    { taskKey, ...(backfill && { notPosted: counters.notPosted }) });
   return { success: true };
 }
 
@@ -779,6 +829,12 @@ async function processTransactionSyncTasks(transactionSyncTasks) {
   if (failed.length > 0) {
     await notifyOwner(`⚠️ shekel-streamer: sync failed for ${failed.join(', ')}. See the logs.`);
     return false;
+  }
+
+  if (backfill) {
+    fs.unlinkSync(BACKFILL_FILE);
+    logger.info('Backfill finished. The file is deleted.', { dryRun: backfill.dryRun });
+    backfill = null;
   }
 
   if (HEALTHCHECK_URL) {

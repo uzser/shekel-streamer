@@ -13,6 +13,7 @@
     "dotenv": "^16.0.3",
     "israeli-bank-scrapers": "^6.13.0",
     "luxon": "^3.3.0",
+    "moment": "^2.29.4",
     "puppeteer": "^24.40.0",
     "winston": "^3.8.2"
   },

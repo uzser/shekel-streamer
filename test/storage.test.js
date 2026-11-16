@@ -79,6 +79,17 @@ test('sqlite: history import adds new rows once and keeps translations', async (
   await storage.close();
 });
 
+test('sqlite: hasNear finds a row some hours off, not one on the next day', async () => {
+  const storage = await tempStorage();
+  await storage.saveOrUpdate(txn({ date: new Date('2025-03-05T00:00:00.000Z') })); // old image: UTC
+  assert.equal(await storage.hasNear(txn({ date: new Date('2025-03-04T22:00:00.000Z') })), true);
+  assert.equal(await storage.hasNear(txn({ date: new Date('2025-03-05T00:00:00.000Z') })), true);
+  assert.equal(await storage.hasNear(txn({ date: new Date('2025-03-05T22:00:00.000Z') })), false);
+  assert.equal(await storage.hasNear(txn({ date: new Date('2025-03-04T22:00:00.000Z'), chargedAmount: -1 })), false);
+  assert.equal(await storage.hasNear(txn({ date: new Date('2025-03-04T22:00:00.000Z'), description: 'x' })), false);
+  await storage.close();
+});
+
 test('telegram: HTML escaping', () => {
   assert.equal(escapeHtml('A&B <b>*_x_*</b>'), 'A&amp;B &lt;b&gt;*_x_*&lt;/b&gt;');
   assert.equal(escapeHtml(undefined), '');

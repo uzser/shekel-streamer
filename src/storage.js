@@ -26,6 +26,7 @@ export function transactionKey(t) {
  *   getExistingKeys(transactions: any[]): Promise<Set<string>>,
  *   saveOrUpdate(transaction: any): Promise<boolean>,
  *   importHistory?(data: object): Promise<{transactions: number, skipped: number, translations: number}>,
+ *   hasNear?(transaction: any): Promise<boolean>,
  *   close(): Promise<void>,
  * }>}
  */
@@ -72,8 +73,14 @@ async function createSqliteStorage(file) {
   );
   const getTr = db.prepare('SELECT translation FROM translations WHERE description = ?');
   const setTr = db.prepare('INSERT OR IGNORE INTO translations (description, translation) VALUES (?, ?)');
+  const findNear = db.prepare(
+    'SELECT 1 FROM transactions WHERE charged_amount = ? AND description = ? AND date > ? AND date < ? LIMIT 1',
+  );
 
   const iso = d => new Date(d).toISOString();
+  // Old rows can have the same transaction at a date some hours off: the old image ran in UTC,
+  // this one in Asia/Jerusalem (bank dates are midnight local time).
+  const NEAR_MS = 12 * 60 * 60 * 1000;
 
   return {
     async check() {
@@ -95,6 +102,11 @@ async function createSqliteStorage(file) {
         }
       }
       return keys;
+    },
+    // A row with the same amount and description and a date less than 12 hours away.
+    async hasNear(t) {
+      const ms = new Date(t.date).getTime();
+      return !!findNear.get(t.chargedAmount, t.description, iso(ms - NEAR_MS), iso(ms + NEAR_MS));
     },
     async saveOrUpdate(t) {
       const now = new Date().toISOString();
