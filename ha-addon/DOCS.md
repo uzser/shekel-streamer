@@ -21,7 +21,9 @@ actions:
   there. Send `/start` to the bot once.
 - `accounts`: one entry per login. `company` (e.g. `hapoalim`), `user_name` (a short name; it
   also names the browser profile), `telegram_channel_id` (where transactions go) and the
-  credential fields that the company needs (Hapoalim: `user_code`, `password`).
+  credential fields that the company needs (Hapoalim: `user_code`, `password`; Isracard and
+  Amex: `id`, `card6digits` and the fixed password `password`; Visa Cal: `username`,
+  `password`). The scrapers log in with a password only, not with a one-time code.
 - `openai_api_key`, `gpt_model_fast`: optional translation.
 - `healthcheck_url`: optional; called (POST) after a run where all accounts succeeded. Use an HA
   webhook to detect days without a successful run: `http://homeassistant:8123/api/webhook/<id>`.

@@ -11,6 +11,8 @@ import { cfg, allSettings } from './config.js';
 import { createStorage, transactionKey } from './storage.js';
 import { sendMessage, askForCode, escapeHtml } from './telegram.js';
 import { HapoalimOtpScraper } from './hapoalim-otp.js';
+import { VisaCalLoginScraper } from './visa-cal-login.js';
+import { redactScraperError } from './redact.js';
 
 
 const DB_NAME = cfg('DB_NAME', 'shekelStreamer');
@@ -493,7 +495,9 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
 
     const scraper = companyId === CompanyTypes.hapoalim
       ? new HapoalimOtpScraper(scraperOptions, createOtpCodeRetriever(taskKey))
-      : createScraper(scraperOptions);
+      : companyId === CompanyTypes.visaCal
+        ? new VisaCalLoginScraper(scraperOptions)
+        : createScraper(scraperOptions);
 
     syncResult = await scraper.scrape(credentials);
   } finally {
@@ -504,7 +508,7 @@ async function handleTransactions(taskKey, user, companyId, credentials, chatId)
     logger.error(`Sync failed`, {
       taskKey,
       errorType: syncResult.errorType,
-      errorMessage: String(syncResult.errorMessage || '').slice(0, 300),
+      errorMessage: redactScraperError(syncResult.errorMessage).slice(0, 300),
     });
     return { success: false, errorType: syncResult.errorType };
   }
@@ -824,7 +828,11 @@ async function processTransactionSyncTasks(transactionSyncTasks) {
         failed.push(`${task.taskKey} (${result.errorType || 'unknown error'})`);
       }
     } catch (error) {
-      logger.error(`Sync failed`, { taskKey: task.taskKey, errorMessage: error.message, errorStack: error.stack });
+      logger.error(`Sync failed`, {
+        taskKey: task.taskKey,
+        errorMessage: redactScraperError(error.message),
+        errorStack: redactScraperError(error.stack),
+      });
       failed.push(`${task.taskKey} (exception)`);
     }
   }
